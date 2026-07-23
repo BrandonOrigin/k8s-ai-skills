@@ -39,17 +39,16 @@ The lessons learned here may eventually inform future AI tooling, but this repos
 
 ```text
 skills/
-    dockerfile-rightsize/
+    dockerfile-usage-predict/
     namespace-security/
-    deployment-review/
-    resource-rightsize/
-    ingress-review/
+    namespace-usage-analysis/
 
 examples/
     sample-inputs/
     generated-reports/
 
 docs/
+    ADRs/ 
     design-notes.md
     evaluation.md
 ```
