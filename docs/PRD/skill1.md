@@ -2,43 +2,64 @@
 
 ## Summary
 
-Guide platform engineers through the process of collecting the required workload and runtime information, then analyze Kubernetes resource utilization and provide safe, explainable CPU and memory request recommendations.
+Guide platform engineers through the process of analyzing running Kubernetes workloads, validating runtime resource usage, and generating safe, explainable resource right-sizing recommendations.
 
-This Skill should support an interactive workflow, allowing users to start with little or no information. The Skill should determine what information is required, guide the user to collect it, validate the provided data, and produce actionable recommendations.
+The Skill supports an interactive workflow where users can start with limited information. The Skill identifies missing information, guides users to collect required runtime data, validates the collected information, and generates container-level CPU and memory recommendations.
+
+The Skill focuses on **post-deployment workload optimization** based on actual workload behavior.
 
 —
 
 # Problem Statement
 
-Determining appropriate Kubernetes resource requests is one of the most common and difficult operational tasks.
+Kubernetes resource sizing is one of the most common challenges for platform engineers.
 
-Many workloads are significantly over-provisioned, wasting cluster resources and increasing infrastructure costs. Others are under-provisioned, leading to CPU throttling, Out Of Memory (OOM) events, or degraded application performance.
+Incorrect resource configuration can cause:
 
-Although resource optimization requires workload configuration and historical runtime metrics, engineers often do not know:
+- Infrastructure cost waste due to over-provisioning.
+- Application instability due to under-provisioning.
+- Poor cluster capacity planning.
+- Inefficient node utilization.
 
-- What information is required
-- Where to obtain the required metrics
-- Which metrics are actually important
-- How to interpret the collected data
+Although Kubernetes resource configuration is simple, determining the correct values requires understanding:
 
-This Skill should guide engineers through the complete right-sizing workflow instead of assuming all required data is already available.
+- Current workload configuration.
+- Actual runtime resource consumption.
+- Workload behavior patterns.
+- Platform resource policies.
+
+Many engineers do not know:
+
+- Which metrics are required.
+- How much historical data is enough.
+- How to interpret workload behavior.
+- Whether resource requests and limits are aligned with platform requirements.
+
+This Skill provides a guided workflow to reach a data-driven recommendation.
 
 —
 
-# Goals
+# Scope
 
-The Skill should:
+## Version 1 Goal
 
-- Help users identify the required information.
-- Guide users to collect missing data.
-- Validate whether sufficient information has been provided.
-- Explain any limitations caused by missing data.
-- Recommend appropriate CPU and memory requests.
-- Explain the reasoning behind every recommendation.
+Analyze **existing running Kubernetes workloads** with historical runtime metrics.
+
+The Skill requires:
+
+```
+Running Kubernetes workload
++
+Runtime metrics
+=
+Resource recommendation
+```
 
 —
 
-# Supported Targets
+# Analysis Target
+
+## Supported
 
 Version 1 supports:
 
@@ -46,132 +67,590 @@ Version 1 supports:
 - StatefulSet
 - DaemonSet
 
-Version 1 does not support:
+The target workload must already exist in a Kubernetes cluster.
 
+—
+
+## Not Supported
+
+Version 1 does not analyze:
+
+- Standalone YAML files without runtime data.
+- Pre-deployment manifests.
 - Job
 - CronJob
 - VirtualMachine
 
+Static YAML review should be implemented as a separate Skill.
+
+Example:
+
+```
+Resource Right-Sizing Skill
+
+        vs
+
+Kubernetes Manifest Review Skill
+```
+
 —
 
-# Expected User Workflow
+# Goals
 
-The Skill should support an iterative conversation rather than a single request.
+The Skill should:
 
-Typical workflow:
+- Understand workload context through conversation.
+- Collect required runtime information.
+- Guide users to obtain missing metrics.
+- Analyze resources at container level.
+- Consider replica impact.
+- Consider existing resource limits and platform policies.
+- Generate explainable recommendations.
+- Provide confidence levels.
 
-1. Understand the workload to analyze.
-2. Determine what information is available.
-3. Identify missing information.
-4. Guide the user to collect missing data.
-5. Validate the collected information.
-6. Analyze resource utilization.
-7. Produce recommendations.
-8. Explain assumptions, confidence, and risks.
+—
 
-The Skill should continue the conversation until sufficient information is available or clearly explain any limitations.
+# Analysis Unit
+
+Kubernetes resource requests and limits are configured at the container level.
+
+Therefore:
+
+> The unit of analysis is the Kubernetes container, not the Pod.
+
+The Skill must analyze each container independently.
+
+A Pod may contain:
+
+- Application containers
+- Service mesh sidecars
+- Logging agents
+- Monitoring agents
+- Other infrastructure containers
+
+The Skill should not only provide Pod-level recommendations.
+
+—
+
+# Interactive Workflow
+
+The Skill should guide users through an interactive process.
+
+```mermaid
+flowchart TD
+
+A[User requests right-sizing analysis]
+—> B[Identify workload]
+
+B —> C[Collect workload configuration]
+
+C —> D[Collect runtime metrics]
+
+D —> E{Enough information available?}
+
+E —>|No| F[Ask questions and guide data collection]
+
+F —> D
+
+E —>|Yes| G[Validate data]
+
+G —> H[Analyze container resource usage]
+
+H —> I[Generate recommendations]
+
+I —> J[Calculate workload impact]
+
+J —> K[Generate final report]
+```
 
 —
 
 # Required Information
 
-The analysis may require:
-
 ## Workload Configuration
 
-- Kubernetes manifest
-- Current CPU requests
-- Current Memory requests
-- Resource limits (if configured)
+Required:
+
+- Kubernetes workload manifest
+- Container names
+- CPU requests
+- Memory requests
 - Replica count
 
-## Runtime Metrics
+Optional:
 
-- CPU utilization
-- Memory utilization
-- Observation period
+- Resource limits
+- HPA configuration
+- Pod restart history
+
+—
+
+# Runtime Metrics
+
+Required:
+
+CPU:
+
+- Historical CPU usage
+
+Memory:
+
+- Historical memory usage
+
 
 Preferred observation period:
 
-- 7 days or longer
+```
+>= 7 days
+```
 
-Acceptable:
+Minimum acceptable:
 
-- 24 hours
+```
+>= 24 hours
+```
 
-The Skill should explain when the available observation period is insufficient.
-
-—
-
-# Interactive Data Collection
-
-When required information is unavailable, the Skill should guide the user through the collection process.
-
-Examples include:
-
-- Asking which monitoring platform the user uses.
-- Explaining what metrics are required.
-- Suggesting how to obtain those metrics for the user’s environment.
-- Confirming the collected information before continuing.
-
-The Skill should adapt to the user’s environment instead of assuming a specific monitoring platform.
+The Skill should reduce confidence if the observation period is insufficient.
 
 —
 
-# Data Validation
+# Replica Handling
 
-Before analysis, the Skill should verify:
+## Recommendation Scope
 
-- Required workload configuration is available.
-- CPU metrics are available.
-- Memory metrics are available.
-- Observation period is sufficient.
+Replica count does not directly affect container resource recommendations.
 
-If information is missing, the Skill should:
+The recommendation answers:
 
-- Explain what is missing.
-- Explain how the missing information affects recommendation quality.
-- Continue when possible with reduced confidence.
+> How much CPU and memory should each container instance request?
+
+Example:
+
+Deployment:
+
+```
+Replica count: 10
+```
+
+Recommendation:
+
+```
+CPU Request:
+
+300m per container
+```
+
+Not:
+
+```
+3000m per container
+```
+
+—
+
+## Replica-aware Impact Analysis
+
+Replica count is used for workload-level impact calculation.
+
+Example:
+
+Current:
+
+```
+Replicas:
+10
+
+CPU Request:
+1000m
+```
+
+Total:
+
+```
+10 × 1000m
+
+= 10000m CPU
+```
+
+Recommendation:
+
+```
+CPU Request:
+300m
+```
+
+Total:
+
+```
+10 × 300m
+
+= 3000m CPU
+```
+
+The Skill should report:
+
+- Total resource reduction
+- Potential capacity improvement
+- Estimated cost impact (future enhancement)
+
+—
+
+# Multi-replica Metrics Aggregation
+
+When multiple replicas exist:
+
+The Skill should aggregate metrics from all container instances before calculating percentiles.
+
+```mermaid
+flowchart LR
+
+A[Metrics from All Replica Containers]
+—> B[Combine Usage Samples]
+
+B —> C[Calculate P95 Usage]
+
+C —> D[Apply Safety Factor]
+
+D —> E[Generate Container Recommendation]
+```
+
+The Skill should not calculate recommendations based on a single Pod unless only one replica exists.
+
+—
+
+# Resource Limits Handling
+
+## Purpose of Resource Limits
+
+Resource limits are not the primary optimization target.
+
+Resource requests are optimized based on workload utilization.
+
+Resource limits are collected because they provide:
+
+- Capacity planning context.
+- Risk assessment.
+- Request/limit relationship validation.
+
+—
+
+# Resource Limit Decision Logic
+
+```mermaid
+flowchart TD
+
+A[Check Existing Limits]
+
+A —> B{Limits configured?}
+
+B —>|Yes| C[Analyze existing limits]
+
+B —>|No| D{Platform requires limits?}
+
+D —>|Yes| E[Generate limit recommendation]
+
+D —>|No| F[Recommend requests only]
+
+C —> G[Generate final recommendation]
+
+E —> G
+
+F —> G
+```
+
+—
+
+# Existing Resource Limits
+
+If limits are already configured:
+
+The Skill should:
+
+- Analyze current request/limit ratio.
+- Recommend updated limits when appropriate.
+- Preserve existing ratio unless workload behavior suggests otherwise.
+
+Example:
+
+Current:
+
+```yaml
+requests:
+  cpu: 1000m
+
+limits:
+  cpu: 2000m
+```
+
+Ratio:
+
+```
+2x
+```
+
+Recommendation:
+
+```
+Request:
+300m
+
+Limit:
+600m
+```
+
+—
+
+# No Existing Resource Limits
+
+If limits are not configured:
+
+The Skill should not automatically create limits by default.
+
+The Skill should ask:
+
+```
+Does your Kubernetes platform require resource limits?
+```
+
+Possible answers:
+
+```
+1. Yes
+2. No
+3. Unknown
+```
+
+If:
+
+```
+No
+```
+
+The Skill recommends requests only.
+
+If:
+
+```
+Yes
+```
+
+The Skill generates limit recommendations based on platform policy.
+
+—
+
+# Sizing Methodology
+
+The Skill uses percentile-based resource analysis.
+
+The goal:
+
+> Cover normal workload peaks while avoiding unnecessary over-provisioning.
+
+—
+
+# CPU Recommendation
+
+Formula:
+
+```
+Recommended CPU Request =
+CPU P95 Usage × CPU Safety Factor
+```
+
+Default:
+
+```
+CPU Safety Factor = 1.2
+```
+
+Example:
+
+```
+Current Request:
+
+1000m
+
+
+CPU P95:
+
+250m
+
+
+Recommendation:
+
+250m × 1.2
+
+= 300m
+```
+
+—
+
+# Memory Recommendation
+
+Formula:
+
+```
+Recommended Memory Request =
+Memory P95 Usage × Memory Safety Factor
+```
+
+Default:
+
+```
+Memory Safety Factor = 1.25
+```
+
+Example:
+
+```
+Current Request:
+
+2Gi
+
+
+Memory P95:
+
+700Mi
+
+
+Recommendation:
+
+700Mi × 1.25
+
+= 875Mi
+
+Rounded:
+
+1Gi
+```
+
+—
+
+# Recommendation Thresholds
+
+## CPU Over-provisioning
+
+Detected when:
+
+```
+Current CPU Request >
+Recommended CPU Request × 2
+```
+
+—
+
+## Memory Over-provisioning
+
+Detected when:
+
+```
+Current Memory Request >
+Recommended Memory Request × 1.5
+```
+
+Additional checks:
+
+- No increasing memory trend.
+- No recent OOM events.
+
+—
+
+## CPU Under-provisioning
+
+Detected when:
+
+```
+CPU P95 Usage >
+Current CPU Request × 0.8
+```
+
+—
+
+## Memory Under-provisioning
+
+Detected when:
+
+```
+Memory P95 Usage >
+Current Memory Request × 0.9
+```
+
+or:
+
+- OOMKilled events detected.
+- Memory continuously increasing.
+
+—
+
+# Confidence Model
+
+Every recommendation must include confidence.
+
+## High Confidence
+
+Conditions:
+
+- Metrics >= 7 days.
+- Complete workload information.
+- Stable usage pattern.
+
+—
+
+## Medium Confidence
+
+Conditions:
+
+- Metrics between 24 hours and 7 days.
+- Some optional information missing.
+
+—
+
+## Low Confidence
+
+Conditions:
+
+- Metrics < 24 hours.
+- High workload variability.
+- Missing critical information.
 
 —
 
 # Expected Output
 
-The Skill should generate a Markdown report containing:
+The Skill should generate a Markdown report.
 
-## Executive Summary
+Structure:
 
-High-level recommendation and confidence.
+```
+# Executive Summary
 
-## Current Configuration
+# Current Configuration
 
-Current CPU and memory requests.
+# Container Analysis
 
-## Resource Utilization Summary
+## Container A
 
-Observed CPU and memory usage.
+Current Resources
 
-## Recommendation
+Usage Analysis
 
-Recommended CPU request.
+Recommendation
 
-Recommended memory request.
+Confidence
 
-## Estimated Resource Savings
 
-Estimated reduction in requested resources.
+# Replica Impact Summary
 
-## Risk Assessment
+# Resource Limit Analysis
 
-Potential operational risks associated with the recommendation.
+# Estimated Resource Savings
 
-## Assumptions
+# Risk Assessment
 
-Document assumptions made during analysis.
+# Assumptions
 
-## Missing Information
-
-List missing information that may reduce recommendation quality.
+# Missing Information
+```
 
 —
 
@@ -179,12 +658,13 @@ List missing information that may reduce recommendation quality.
 
 A successful analysis should:
 
-- Identify obvious over-provisioning.
-- Identify obvious under-provisioning.
-- Produce explainable recommendations.
-- Clearly communicate confidence.
-- Clearly communicate analysis limitations.
-- Require minimal Kubernetes expertise from the user.
+- Analyze running workloads only.
+- Provide container-level recommendations.
+- Correctly handle multi-container Pods.
+- Correctly account for replica impact.
+- Explain request and limit relationships.
+- Provide explainable methodology.
+- Clearly communicate confidence and limitations.
 
 —
 
@@ -192,22 +672,22 @@ A successful analysis should:
 
 Version 1 does not:
 
-- Modify Kubernetes manifests.
-- Apply configuration changes.
-- Recommend HPA configuration.
-- Recommend Cluster Autoscaler settings.
-- Recommend Resource Limits.
+- Analyze standalone YAML manifests.
+- Automatically modify Kubernetes resources.
+- Apply Kubernetes changes.
+- Configure HPA.
+- Configure Cluster Autoscaler.
 - Continuously monitor workloads.
 
 —
 
 # Future Enhancements
 
-Possible future capabilities include:
+Possible improvements:
 
-- Historical trend analysis
-- HPA-aware recommendations
-- Namespace-wide optimization
-- Cost estimation
-- Recommendation comparison across environments
-- Automatic report generation
+- Automatic metric collection.
+- Prometheus integration.
+- Cost estimation.
+- HPA-aware recommendations.
+- Namespace-level optimization.
+- Automated pull request generation.
