@@ -139,28 +139,27 @@ The Skill should guide users through an interactive process.
 ```mermaid
 flowchart TD
 
-A[User requests right-sizing analysis]
-—> B[Identify workload]
+A[User requests right-sizing analysis] --> B[Identify workload]
 
-B —> C[Collect workload configuration]
+B --> C[Collect workload configuration]
 
-C —> D[Collect runtime metrics]
+C --> D[Collect runtime metrics]
 
-D —> E{Enough information available?}
+D --> E{Enough information available?}
 
-E —>|No| F[Ask questions and guide data collection]
+E -->|No| F[Ask questions and guide data collection]
 
-F —> D
+F --> D
 
-E —>|Yes| G[Validate data]
+E -->|Yes| G[Validate data]
 
-G —> H[Analyze container resource usage]
+G --> H[Analyze container resource usage]
 
-H —> I[Generate recommendations]
+H --> I[Generate recommendations]
 
-I —> J[Calculate workload impact]
+I --> J[Calculate workload impact]
 
-J —> K[Generate final report]
+J --> K[Generate final report]
 ```
 
 —
@@ -304,14 +303,13 @@ The Skill should aggregate metrics from all container instances before calculati
 ```mermaid
 flowchart LR
 
-A[Metrics from All Replica Containers]
-—> B[Combine Usage Samples]
+A[Metrics from All Replica Containers] --> B[Combine Usage Samples]
 
-B —> C[Calculate P95 Usage]
+B --> C[Calculate P95 Usage]
 
-C —> D[Apply Safety Factor]
+C --> D[Apply Safety Factor]
 
-D —> E[Generate Container Recommendation]
+D --> E[Generate Container Recommendation]
 ```
 
 The Skill should not calculate recommendations based on a single Pod unless only one replica exists.
@@ -341,21 +339,21 @@ flowchart TD
 
 A[Check Existing Limits]
 
-A —> B{Limits configured?}
+A --> B{Limits configured?}
 
-B —>|Yes| C[Analyze existing limits]
+B -->|Yes| C[Analyze existing limits]
 
-B —>|No| D{Platform requires limits?}
+B -->|No| D{Platform requires limits?}
 
-D —>|Yes| E[Generate limit recommendation]
+D -->|Yes| E[Generate limit recommendation]
 
-D —>|No| F[Recommend requests only]
+D -->|No| F[Recommend requests only]
 
-C —> G[Generate final recommendation]
+C --> G[Generate final recommendation]
 
-E —> G
+E --> G
 
-F —> G
+F --> G
 ```
 
 —
@@ -521,8 +519,84 @@ Recommendation:
 
 Rounded:
 
-1Gi
+896Mi
 ```
+
+—
+
+# Recommendation Rounding
+
+The Skill should round recommendations upward to Kubernetes-friendly values.
+
+The purpose of rounding is:
+
+- Avoid recommending values below calculated requirements.
+- Maintain safety margin.
+- Provide predictable recommendations.
+
+The Skill must never round resource recommendations downward.
+
+Rounding is applied after the safety factor. When a limit recommendation is generated from an existing request/limit ratio, the ratio is applied to the rounded request, and the resulting limit is then rounded using the same rules.
+
+—
+
+## CPU Rounding
+
+CPU recommendations should be rounded up to the nearest 50m.
+
+Examples:
+
+```
+264m --> 300m
+
+310m --> 350m
+
+501m --> 550m
+```
+
+—
+
+## Memory Rounding
+
+Memory recommendations should use different increments depending on size.
+
+For values below 1Gi:
+
+Round up to nearest 128Mi.
+
+Examples:
+
+```
+300Mi --> 384Mi
+
+700Mi --> 768Mi
+
+875Mi --> 896Mi
+```
+
+For values equal to or above 1Gi:
+
+Round up to nearest 256Mi.
+
+Examples:
+
+```
+1.1Gi --> 1.25Gi
+
+1.6Gi --> 1.75Gi
+```
+
+—
+
+## Platform Override
+
+The default rounding policy may be overridden by platform-specific requirements.
+
+Examples:
+
+- Internal Kubernetes platform standards.
+- Cloud provider recommendations.
+- Enterprise capacity planning rules.
 
 —
 
@@ -586,13 +660,32 @@ or:
 
 Every recommendation must include confidence.
 
+## Variability Ratio
+
+To make "usage stability" measurable, the Skill calculates a Variability Ratio for CPU and memory independently:
+
+```
+Variability Ratio =
+P95 Usage / P50 Usage
+```
+
+The workload's overall variability is the higher (worse) of the two per-resource ratios.
+
+```
+Stable:          ratio <= 2
+Variable:        2 < ratio <= 4
+Highly variable: ratio > 4
+```
+
+—
+
 ## High Confidence
 
 Conditions:
 
 - Metrics >= 7 days.
 - Complete workload information.
-- Stable usage pattern.
+- Variability Ratio <= 2 (Stable).
 
 —
 
@@ -600,7 +693,8 @@ Conditions:
 
 Conditions:
 
-- Metrics between 24 hours and 7 days.
+- Metrics between 24 hours and 7 days, or
+- Variability Ratio between 2 and 4 (Variable), or
 - Some optional information missing.
 
 —
@@ -609,8 +703,8 @@ Conditions:
 
 Conditions:
 
-- Metrics < 24 hours.
-- High workload variability.
+- Metrics < 24 hours, or
+- Variability Ratio > 4 (Highly variable), regardless of observation period length, or
 - Missing critical information.
 
 —
