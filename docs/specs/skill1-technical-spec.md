@@ -82,12 +82,15 @@ If the workload kind is unsupported (Job, CronJob, VirtualMachine, or a bare man
       "limits":   { "cpu": "string (K8s quantity)", "memory": "string (K8s quantity)" }
     }
   ],
-  "hpa": { "min": "int", "max": "int", "targetCPUUtilization": "int" },
-  "restartHistory": [{ "container": "string", "reason": "OOMKilled | Error | ...", "count": "int" }]
+  "hpa": { "min": "int", "max": "int", "targetCPUUtilization": "int" } | null,
+  "restartHistory": [{ "container": "string", "reason": "OOMKilled | Error | ...", "count": "int" }],
+  "platformLimitPolicy": { "type": "ratio | absolute", "cpu": "number | K8s quantity", "memory": "number | K8s quantity" } | null
 }
 ```
 
-`containers[].requests.{cpu,memory}` is **required** per container. `limits`, `hpa`, and `restartHistory` are optional (PRD §"Workload Configuration"). DaemonSet `replicas` is derived from scheduled node count, not a spec field — the skill must ask for or infer this separately rather than reading `.spec.replicas`.
+`containers[].requests.{cpu,memory}` is **required** per container. `limits`, `hpa`, `restartHistory`, and `platformLimitPolicy` are optional (PRD §"Workload Configuration"); see §12 for how `platformLimitPolicy` is populated. Every optional field must be set to an explicit value or explicit `null`/"confirmed absent" — the model must not leave a field simply unasked, per the completeness rule in §10.
+
+**DaemonSet replicas (resolved, was open in §13):** the model asks the user directly — "How many nodes/pods is this DaemonSet currently scheduled on?" — rather than reading `.spec.replicas` (which doesn't exist) or inferring from cluster state the skill has no access to. If the user cannot provide it, `replicas` is left unset, the Replica Impact Summary (§11) reports totals as "not computable — replica count unknown" instead of guessing, and this counts as missing critical info, forcing per-container confidence to `LOW` (§10).
 
 ### 4.2 Runtime Metrics (input, per container)
 
@@ -209,7 +212,7 @@ memory_underprovisioned = (p95_memory_usage > current_memory_request * 0.9
                             or increasing_memory_trend)
 ```
 
-`increasing_memory_trend` is not numerically specified in the PRD. Implementation: linear regression slope over the observation window on the combined memory sample series; treat as "increasing" if the slope is positive and statistically distinguishable from noise (e.g., slope > 0 with R² above a small threshold, or a simpler first-half-vs-second-half mean comparison with a >10% increase). This should be documented in `references/methodology.md` as an implementation choice, since the PRD leaves it qualitative — flag it as an open question if precision matters for the release.
+**`increasing_memory_trend` (resolved, was open in §13):** the PRD leaves this qualitative. Default: split the combined memory sample series at its temporal midpoint, compute the mean of each half, and flag "increasing" if `second_half_mean > first_half_mean × 1.10` (a >10% rise). This is chosen over a regression slope because it's simpler to explain in the report ("usage in the second half of the window averaged X% higher than the first half"), it's insensitive to reordering artifacts across concatenated multi-replica samples, and it avoids over-fitting noise on short or sparse windows where a slope+R² test is unreliable. Document this formula verbatim in `references/methodology.md` so the report's "Assumptions" section can cite it precisely.
 
 These flags feed the "Risk Assessment" report section (§11) — they are informational, not gates that block a recommendation from being generated.
 
@@ -240,15 +243,22 @@ LOW    if observation_hours < 24
        or critical info missing (no requests, no metrics for that container)
 
 HIGH   if observation_hours >= 168 (7 days)
-       and complete workload info (limits present, HPA known — "complete" is
-           whatever fields were actually requested from the user, not a
-           hardcoded field list; see note below)
+       and complete workload info (see fixed checklist below)
        and overall_variability == "stable"
 
 MEDIUM otherwise
 ```
 
 Evaluate `LOW` conditions first (highest precedence — any one trips it regardless of the others), then `HIGH` (all conditions must hold), else `MEDIUM`. This matches the PRD's ordering (Low is checked as an override — "regardless of observation period length" — before High's stricter AND-conditions apply).
+
+**"Complete workload info" (resolved, was open in §13):** defining this as "whatever fields were actually requested" is circular — it would let the model reach HIGH confidence just by not asking. Instead, "complete" means every optional field in §4.1 has an **explicit answer on record**, not merely a populated value:
+
+- `limits` — either present, or the user has confirmed no limits are configured (not simply "not mentioned").
+- `hpa` — either present, or the user has confirmed no HPA is configured.
+- `restartHistory` — the model has explicitly asked about restarts/OOM events and recorded the answer (even if "none").
+- `platformLimitPolicy` — resolved via §12 (a definite Yes/No/Unknown on record, and a policy value if Yes).
+
+If any of these was simply never asked, confidence caps at `MEDIUM` even if the numeric criteria (7 days, stable variability) are met. This makes HIGH confidence a function of what was verified, not what was skipped.
 
 `p50 == 0` (idle container with zero usage in some samples) must not raise a `ZeroDivisionError` — treat ratio as `inf` → `highly_variable` → forces `LOW` confidence, which is the conservative and correct outcome for a container with no measurable baseline.
 
@@ -262,7 +272,7 @@ Structure fixed by PRD §"Expected Output"; `references/report-template.md` hold
 
 - Executive Summary — total containers analyzed, headline savings %, overall risk level.
 - Current Configuration — table of kind/name/namespace/replicas/containers.
-- Container Analysis (repeated per container) — Current Resources, Usage Analysis (P50/P95/variability), Recommendation (request + limit if applicable), Confidence (+ one-line reason).
+- Container Analysis (repeated per container, **including containers with no metrics** — resolved, was open in §13) — Current Resources, Usage Analysis (P50/P95/variability), Recommendation (request + limit if applicable), Confidence (+ one-line reason). A container present in the workload config but missing metrics still gets its own subsection, with Usage Analysis and Recommendation replaced by "No runtime metrics available — excluded from analysis" and Confidence forced to `LOW`; it is not omitted from the report, so the section count always matches the container count in Current Configuration, and the gap is visible in place rather than only in the aggregated Missing Information list.
 - Replica Impact Summary — current vs. recommended totals, per §5.2.
 - Resource Limit Analysis — existing ratio or "platform requires limits?" outcome, per §12.
 - Estimated Resource Savings — CPU/memory delta, workload-level.
@@ -282,26 +292,59 @@ Implements PRD §"Resource Limit Decision Logic" as a branch evaluated once per 
 if container has existing limits:
     ratio = current_limit / current_request   # per resource, CPU and memory independently
     recommended_limit = round(recommended_request * ratio)   # §8
+
 else:
     if platform_requires_limits is None:
         ask_user("Does your Kubernetes platform require resource limits? [Yes/No/Unknown]")
-        # Unknown is treated as No for this run, but recorded under Assumptions
+
     if platform_requires_limits == True:
-        recommended_limit = derive_from_platform_policy(...)  # policy source TBD, see §13
-    else:
+        if platformLimitPolicy is not provided:
+            ask_user(
+                "What ratio or absolute cap does your platform require for CPU/memory limits? "
+                "(e.g. '2x request', or an absolute value like '2000m CPU / 1Gi memory'). "
+                "Reply 'not sure' if you don't know."
+            )
+        if platformLimitPolicy provided (ratio or absolute):
+            recommended_limit = apply_policy(recommended_request, platformLimitPolicy)  # §8 rounding applied after
+            label recommendation as "policy-derived" in the report, not usage-derived
+        else:  # user replied "not sure"
+            recommended_limit = round(recommended_request * DEFAULT_CONSERVATIVE_RATIO)
+            # DEFAULT_CONSERVATIVE_RATIO = 2.0 (CPU), 1.5 (memory) — matches the
+            # PRD's own over-provisioning thresholds (§9), so a limit at this
+            # ratio does not itself trigger an over-provisioning flag.
+            flag in Assumptions: "No platform limit policy provided; used a
+            conservative default ratio. Confirm against actual platform policy
+            before applying."
+
+    else:  # False or Unknown
         recommended_limit = None  # requests-only recommendation
+        if platform_requires_limits == "Unknown":
+            flag in Assumptions: "Platform limit requirement unknown; treated
+            as not required for this recommendation. Confirm with platform
+            team before omitting limits."
 ```
 
 This must run per container per resource (CPU and memory can have different existing ratios), not once for the whole workload.
 
+**Platform limit policy source (resolved, was open in §13):** rather than silently deriving a limit from an undefined "platform policy," the model asks for the policy directly in-conversation (a ratio or an absolute cap) and stores it in the optional `platformLimitPolicy` field (§4.1) so it's part of the auditable input, not a hidden side channel. If the user doesn't know their platform's policy, the skill falls back to a conservative default ratio (2.0× CPU, 1.5× memory — deliberately set at the PRD's own over-provisioning threshold, so the fallback recommendation doesn't immediately flag itself as over-provisioned) and says so explicitly under Assumptions, rather than guessing silently or blocking the report. "Unknown" for whether limits are required at all is treated as "No" for this run (requests-only), with the same explicit caveat under Assumptions.
+
 —
 
-## 13. Open Questions / Risks Carried From PRD
+## 13. Resolved Decisions (v1 Defaults)
 
-- **Platform limit policy source** (§12, "Yes" branch): PRD says "generates limit recommendations based on platform policy" without defining where that policy comes from. v1 should either (a) ask the user for a policy directly (e.g., a fixed ratio or absolute cap) in-conversation, or (b) accept it as an optional input field and clearly label the recommendation as policy-derived, not usage-derived. This needs a decision before implementation, not left implicit.
-- **Increasing-trend detection** (§9) is under-specified in the PRD; the regression/threshold approach above is a reasonable default but should be confirmed or replaced.
-- **DaemonSet replica count** (§4.1) requires a data source (scheduled node count) not present in the workload manifest itself — the skill needs to either ask the user or note it as a required-but-external input.
-- Percentile interpolation method (§6) and unit convention (binary vs. decimal, §8) are implementation choices not pinned by the PRD; pinning them (as done above) is necessary for reproducible recommendations across runs.
+The PRD left the following underspecified. Each is now pinned to a concrete default so implementation can proceed without further blocking questions. These are v1 defaults, not immutable — revisit if real usage shows a default is wrong.
+
+| # | Gap | Default chosen | Where implemented |
+|---|---|---|---|
+| 1 | Platform limit policy source | Ask the user in-conversation for a ratio or absolute cap; store in `platformLimitPolicy`. If unknown, fall back to a conservative ratio (2.0× CPU, 1.5× memory) and flag it under Assumptions. | §4.1, §12 |
+| 2 | "Increasing memory trend" definition | First-half-vs-second-half mean comparison, flagged at >10% rise. Chosen over a regression slope for explainability and robustness on short/sparse windows. | §9 |
+| 3 | "Complete workload info" for HIGH confidence | Requires an explicit answer (value or confirmed-absent) for every optional field — `limits`, `hpa`, `restartHistory`, `platformLimitPolicy` — not merely "whatever was asked." Prevents reaching HIGH confidence by skipping questions. | §10 |
+| 4 | DaemonSet replica count | Ask the user directly ("how many nodes/pods is this scheduled on?"). If unavailable, leave `replicas` unset, report impact totals as "not computable," and force `LOW` confidence (missing critical info). | §4.1 |
+| 5 | Percentile interpolation method & unit convention | Linear interpolation (e.g. `numpy.percentile` default); binary (1024-based) units end-to-end. Required to reproduce the PRD's own worked examples exactly. | §6, §8 |
+| 6 | "Unknown" answer to "does your platform require limits?" | Treated as "No" (requests-only) for this run, with an explicit Assumptions caveat to confirm with the platform team. | §12 |
+| 7 | Container with config but no metrics | Gets its own Container Analysis subsection (not omitted), with Usage Analysis/Recommendation replaced by an explicit "no metrics" note and Confidence forced to `LOW`. | §11 |
+
+Items 1, 4, and 6 introduce user-facing questions beyond what §3's state machine originally enumerated (`COLLECT_CONFIG`/`COLLECT_METRICS` should be read as including these follow-ups, not just the base fields in §4.1-4.2).
 
 —
 
@@ -311,3 +354,4 @@ This must run per container per resource (CPU and memory can have different exis
 - **Schema validation tests**: malformed/incomplete inputs from §4.3 each produce the expected rejection or warning, not a silent pass-through.
 - **Scenario tests** (via `examples/sample-input.json` → expected report sections): single-replica workload, multi-replica workload, workload with existing limits, workload with no limits (both platform-requires-limits branches), workload with OOM events, workload with insufficient observation window (<24h) to confirm it downgrades confidence rather than blocking the report.
 - **Conversation-flow review**: manually walk the state machine (§3) with partial information at each state to confirm the skill asks targeted follow-up questions rather than failing or guessing.
+- **Resolved-decision coverage (§13)**: unit tests for the first-half/second-half trend detector at and around the 10% boundary; a scenario test for a DaemonSet with no user-supplied replica count (confirms "not computable" impact + forced `LOW` confidence, not a guessed number); a scenario test for a container present in config with zero metrics samples (confirms its own report subsection, not an omission); and scenario tests for both the policy-provided and "not sure" branches of §12's limit logic (confirms the conservative-ratio fallback and its Assumptions callout).
