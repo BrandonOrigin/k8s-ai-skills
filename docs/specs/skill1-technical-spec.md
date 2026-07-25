@@ -138,8 +138,8 @@ Every computation in §6-10 runs **per container name**, independently, includin
 
 Two distinct computations, not to be conflated:
 
-1. **Per-container recommendation** — computed from aggregated *per-instance* usage (§6.1). Independent of replica count by construction, because aggregation happens before the percentile, not after.
-2. **Workload impact** — `totalCurrent = replicas × currentRequest`, `totalRecommended = replicas × recommendedRequest`, reported as absolute and percentage delta. This is purely arithmetic on the already-rounded per-container recommendation from §9-10, computed once at the `IMPACT` state.
+1. **Per-container recommendation** — computed from aggregated *per-instance* usage (§6). Independent of replica count by construction, because aggregation happens before the percentile, not after.
+2. **Workload impact** — `totalCurrent = replicas × currentRequest`, `totalRecommended = replicas × recommendedRequest`, reported as absolute and percentage delta. This is purely arithmetic on the already-rounded per-container recommendation from §7-8, computed once at the `IMPACT` state.
 
 —
 
@@ -175,7 +175,7 @@ def recommended_memory_bytes(p95_memory_bytes: float) -> float:
     return p95_memory_bytes * MEMORY_SAFETY_FACTOR
 ```
 
-Safety factors are constants for v1 but must be exposed as parameters (not hardcoded inline in formatting logic) so a platform override (§7.4 below / PRD §"Platform Override") can pass different values without code changes.
+Safety factors are constants for v1 but must be exposed as parameters (not hardcoded inline in formatting logic) so the same platform-override hook described in §8 (PRD §"Platform Override") can pass different values without code changes.
 
 —
 
