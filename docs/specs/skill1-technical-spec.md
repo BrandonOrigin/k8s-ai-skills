@@ -89,9 +89,18 @@ If the workload kind is unsupported (Job, CronJob, VirtualMachine, or a bare man
 }
 ```
 
-`containers[].requests.{cpu,memory}` is **required** per container. `limits`, `hpa`, `restartHistory`, `platformRequiresLimits`, and `platformLimitPolicy` are optional (PRD §"Workload Configuration"); see §12 for how `platformRequiresLimits`/`platformLimitPolicy` are populated. Every optional field must be set to an explicit value or explicit `null`/"confirmed absent" — the model must not leave a field simply unasked, per the completeness rule in §10.
+`containers[].requests.{cpu,memory}` is **required** per container. `limits`, `hpa`, `restartHistory`, `platformRequiresLimits`, and `platformLimitPolicy` are optional (PRD §"Workload Configuration"); see §12 for how `platformRequiresLimits`/`platformLimitPolicy` are populated.
 
-**`platformRequiresLimits` (resolved):** a two-valued question, not three — the model asks "Does your Kubernetes platform require resource limits? [Yes/No]" and stores the boolean answer directly in this field. `null` means the question hasn't been asked yet (an unresolved state the completeness checklist in §10 can detect), not a third answer choice; there is no "Unknown" response the user can give. `platformLimitPolicy` (the ratio/cap itself) is a separate field, only relevant when `platformRequiresLimits == true` — see §12.
+**Presence convention (resolved — distinguishes "never asked" from "confirmed absent"):** an optional field's *key* and its *value* carry different meanings, and both are needed:
+
+- **Key absent from the payload** → the question was never posed to the user. This is the only representation of "unresolved" — the completeness checklist in §10 treats a missing key as an unanswered question, full stop.
+- **Key present, value `null`** → for object-shaped fields (`limits` per container, `hpa`), this means the model explicitly asked and the user confirmed there is none configured (e.g. "no resource limits on this container," "no HPA attached"). `null` is a real, confirmed answer, not a stand-in for "not asked."
+- **Key present, value `[]`** → for the array-shaped `restartHistory`, this means the model explicitly asked about restarts/OOM events and the user confirmed zero. An empty array is inherently a "confirmed zero," so it doesn't need a separate `null` state the way object fields do.
+- **Key present, value populated** → configured/has data, used directly.
+
+This applies per container for `limits` (each container's `limits` key is independently absent/null/populated) and at the workload level for `hpa` and `restartHistory`. `platformRequiresLimits` doesn't need this three-way scheme because it's a plain boolean: `true`/`false` already *are* confirmed answers, so only two states exist — key absent or `null` means unasked, and `true`/`false` means asked-and-answered. See below.
+
+**`platformRequiresLimits` (resolved):** a two-valued question, not three — the model asks "Does your Kubernetes platform require resource limits? [Yes/No]" and stores the boolean answer directly in this field. Absent-or-`null` means the question hasn't been asked yet (an unresolved state the completeness checklist in §10 can detect), not a third answer choice; there is no "Unknown" response the user can give. `platformLimitPolicy` (the ratio/cap itself) is a separate field, only relevant when `platformRequiresLimits == true`, and follows the same object-shaped convention as `limits`/`hpa` (absent = not yet asked; the "not sure" outcome in §12 is recorded by leaving `platformRequiresLimits == true` while `platformLimitPolicy` stays `null` — a confirmed "asked, doesn't know" rather than "never asked") — see §12.
 
 **DaemonSet replicas (resolved, was open in §13):** the model asks the user directly — "How many nodes/pods is this DaemonSet currently scheduled on?" — rather than reading `.spec.replicas` (which doesn't exist) or inferring from cluster state the skill has no access to. If the user cannot provide it, `replicas` is left unset, the Replica Impact Summary (§11) reports totals as "not computable — replica count unknown" instead of guessing, and this counts as missing critical info, forcing per-container confidence to `LOW` (§10).
 
@@ -115,6 +124,7 @@ Required: `cpu.samples`, `memory.samples`, `observationWindowHours` (used direct
 - Reject if a metrics sample set exists for a container name not present in `containers` (mismatch — likely wrong workload).
 - Reject if `observationWindowHours < 1` (not just below the 24h "minimum acceptable" — that's a confidence penalty, not a hard failure; PRD only hard-requires *some* data).
 - Warn (do not reject) if a container present in `containers` has no matching metrics — that container is reported under "Missing Information" (§11) and excluded from recommendations, not silently dropped from the report.
+- Accept explicit `null` (on `limits`, `hpa`, `platformLimitPolicy`) and explicit `[]` (on `restartHistory`) as fully valid, fully-resolved input per the §4.1 presence convention — these are not missing data to warn about, they are confirmed answers. Only a genuinely *absent* key is "unresolved," and that's a confidence-model concern (§10), not a schema validation failure.
 
 —
 
@@ -277,14 +287,14 @@ MEDIUM otherwise
 
 Evaluate `LOW` conditions first (highest precedence — any one trips it regardless of the others), then `HIGH` (all conditions must hold), else `MEDIUM`. This matches the PRD's ordering (Low is checked as an override — "regardless of observation period length" — before High's stricter AND-conditions apply).
 
-**"Complete workload info" (resolved, was open in §13):** defining this as "whatever fields were actually requested" is circular — it would let the model reach HIGH confidence just by not asking. Instead, "complete" means every optional field in §4.1 has an **explicit answer on record**, not merely a populated value:
+**"Complete workload info" (resolved, was open in §13):** defining this as "whatever fields were actually requested" is circular — it would let the model reach HIGH confidence just by not asking. Instead, "complete" means every optional field in §4.1 is **key-present** per the presence convention (§4.1) — key-absent is the only "unresolved" state, so this check is a direct read of the data, not a judgment call:
 
-- `limits` — either present, or the user has confirmed no limits are configured (not simply "not mentioned").
-- `hpa` — either present, or the user has confirmed no HPA is configured.
-- `restartHistory` — the model has explicitly asked about restarts/OOM events and recorded the answer (even if "none").
-- `platformRequiresLimits` — a definite Yes/No on record (§4.1); and if Yes, `platformLimitPolicy` has either a policy value or an explicit "not sure" (the conservative-ratio fallback in §12) — either counts as resolved for completeness purposes, since "not sure" is a recorded answer, not a skipped question.
+- `limits` (per container) — key present, either `null` (confirmed no limits) or populated.
+- `hpa` — key present, either `null` (confirmed no HPA) or populated.
+- `restartHistory` — key present, either `[]` (confirmed zero restarts/OOM events) or populated.
+- `platformRequiresLimits` — key present with `true`/`false` (never `null`, since `null` on a boolean field means unasked, per §4.1); if `true`, `platformLimitPolicy` must also be key-present, either `null` ("not sure," the conservative-ratio fallback in §12) or populated — both count as resolved, since "not sure" is a recorded answer, not a skipped question.
 
-If any of these was simply never asked, confidence caps at `MEDIUM` even if the numeric criteria (7 days, stable variability) are met. This makes HIGH confidence a function of what was verified, not what was skipped.
+If any of these keys is absent, confidence caps at `MEDIUM` even if the numeric criteria (7 days, stable variability) are met. This makes HIGH confidence a function of what was verified, not what was skipped.
 
 `p50 == 0` (idle container with zero usage in some samples) must not raise a `ZeroDivisionError` — treat ratio as `inf` → `highly_variable` → forces `LOW` confidence, which is the conservative and correct outcome for a container with no measurable baseline.
 
@@ -315,23 +325,30 @@ The "Missing Information" and "Assumptions" sections are not optional boilerplat
 Implements PRD §"Resource Limit Decision Logic" as a branch evaluated once per container:
 
 ```text
-if container has existing limits:
+if container.limits key is absent (never asked):
+    ask_user("Does this container currently have CPU/memory limits configured?")
+    # if yes: record the values -> container.limits = {cpu, memory}
+    # if no:  record the confirmed-absent answer -> container.limits = null (§4.1 presence convention)
+
+if container.limits is present and non-null:      # existing limits, confirmed
     ratio = current_limit / current_request   # per resource, CPU and memory independently
     recommended_limit = round(recommended_request * ratio)   # §8
 
-else:
-    if platformRequiresLimits is null:
+else:   # container.limits is null — confirmed no existing limits
+    if platformRequiresLimits is absent or null:
         ask_user("Does your Kubernetes platform require resource limits? [Yes/No]")
         # store the boolean answer in platformRequiresLimits (§4.1) — no third option
 
     if platformRequiresLimits == true:
-        if platformLimitPolicy is not provided:
+        if platformLimitPolicy key is absent (never asked):
             ask_user(
                 "What ratio or absolute cap does your platform require for CPU/memory limits? "
                 "(e.g. '2x request', or an absolute value like '2000m CPU / 1Gi memory'). "
                 "Reply 'not sure' if you don't know."
             )
-        if platformLimitPolicy provided (ratio or absolute):
+            # if a value is given: platformLimitPolicy = {type, cpu, memory}
+            # if "not sure": platformLimitPolicy = null (confirmed "asked, doesn't know" — §4.1 presence convention)
+        if platformLimitPolicy is present and non-null:
             recommended_limit = apply_policy(recommended_request, platformLimitPolicy)  # §8 rounding applied after
             label recommendation as "policy-derived" in the report, not usage-derived
         else:  # user replied "not sure" — platformRequiresLimits is still true, just no policy value
@@ -368,8 +385,9 @@ The PRD left the following underspecified. Each is now pinned to a concrete defa
 | 5 | Percentile interpolation method & unit convention | Linear interpolation (e.g. `numpy.percentile` default); binary (1024-based) units end-to-end. Required to reproduce the PRD's own worked examples exactly. | §6, §8 |
 | 6 | ~~"Unknown" answer to "does your platform require limits?"~~ | **Superseded** — the question is strictly Yes/No (item 1); there is no third "Unknown" answer to handle. `platformRequiresLimits: null` distinguishes "not asked yet" from either answer, so no separate Unknown-handling branch is needed. | §4.1, §12 |
 | 7 | Container with config but no metrics | Gets its own Container Analysis subsection (not omitted), with Usage Analysis/Recommendation replaced by an explicit "no metrics" note and Confidence forced to `LOW`. | §11 |
+| 8 | "Confirmed absent" vs. "never asked" for `limits`/`hpa`/`restartHistory` | Fixed presence convention: key absent = never asked; key present with `null` (object fields) or `[]` (array field) = confirmed nothing there; key present with a value = configured. Makes the §10 completeness check a direct key-presence read instead of a judgment call. | §4.1, §10, §12 |
 
-Items 1 and 4 introduce user-facing questions beyond what §3's state machine originally enumerated (`COLLECT_CONFIG`/`COLLECT_METRICS` should be read as including these follow-ups, not just the base fields in §4.1-4.2).
+Items 1 and 4 introduce user-facing questions beyond what §3's state machine originally enumerated (`COLLECT_CONFIG`/`COLLECT_METRICS` should be read as including these follow-ups, not just the base fields in §4.1-4.2). Item 8's convention means schema validation (§4.3) must treat explicit `null`/`[]` on these fields as valid, fully-resolved input, not as missing data to warn about.
 
 —
 
