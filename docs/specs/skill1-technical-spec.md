@@ -215,7 +215,30 @@ memory_underprovisioned = (p95_memory_usage > current_memory_request * 0.9
                             or increasing_memory_trend)
 ```
 
-**`increasing_memory_trend` (resolved, was open in §13):** the PRD leaves this qualitative. Default: split the combined memory sample series at its temporal midpoint, compute the mean of each half, and flag "increasing" if `second_half_mean > first_half_mean × 1.10` (a >10% rise). This is chosen over a regression slope because it's simpler to explain in the report ("usage in the second half of the window averaged X% higher than the first half"), it's insensitive to reordering artifacts across concatenated multi-replica samples, and it avoids over-fitting noise on short or sparse windows where a slope+R² test is unreliable. Document this formula verbatim in `references/methodology.md` so the report's "Assumptions" section can cite it precisely.
+**`increasing_memory_trend` (resolved, was open in §13):** the PRD leaves this qualitative. Default: for each resource, split each pod's *own* memory sample series (sorted by its own timestamps) at its own temporal midpoint, compute that pod's `second_half_mean / first_half_mean - 1`, then combine across pod instances by taking the unweighted mean of the per-pod percentage changes. Flag "increasing" if the combined value is `> 0.10` (a >10% rise).
+
+```python
+def container_memory_trend_increasing(pod_sample_series: list[list[tuple[timestamp, float]]]) -> bool:
+    per_pod_pct_changes = []
+    for series in pod_sample_series:
+        series = sorted(series, key=lambda s: s[0])
+        if len(series) < 4:          # need >=2 points per half to mean anything
+            continue                 # this pod excluded from the trend signal, not from percentile calc
+        mid = len(series) // 2
+        first_half_mean = mean(v for _, v in series[:mid])
+        second_half_mean = mean(v for _, v in series[mid:])
+        if first_half_mean == 0:
+            continue                 # avoid divide-by-zero; an idle-then-active pod is ambiguous, skip it
+        per_pod_pct_changes.append(second_half_mean / first_half_mean - 1)
+
+    if not per_pod_pct_changes:
+        return False                 # insufficient data to assess trend; recorded under Assumptions, not silently False-by-default
+    return mean(per_pod_pct_changes) > 0.10
+```
+
+Per-pod-then-combine is necessary rather than splitting the concatenated multi-replica sample set (as an earlier draft of this section proposed): §6 concatenates samples from all replica pods for the percentile calculation, but that concatenation does **not** preserve a single shared timeline — concurrent pods each contribute their own 0→window range, so "the temporal midpoint of the combined set" is not a well-defined moment in wall-clock time once replicas > 1. Computing the trend per pod first (each pod's own timeline is well-ordered) and then averaging the resulting percentage changes sidesteps that entirely, and degenerates cleanly to the single-pod case when `replicas == 1`.
+
+If fewer than half the pods have enough samples to compute their own trend, or all are excluded (e.g. very short-lived pods, or a `<24h` observation window with few CPU/memory scrape points), the report's Assumptions section must note that the trend signal is based on partial pod coverage — this is a real limitation, not just an implementation footnote, since `increasing_memory_trend` directly feeds both the over- and under-provisioning flags in the block above. Document the formula verbatim in `references/methodology.md` so the report can cite it precisely.
 
 These flags feed the "Risk Assessment" report section (§11) — they are informational, not gates that block a recommendation from being generated.
 
@@ -339,7 +362,7 @@ The PRD left the following underspecified. Each is now pinned to a concrete defa
 | # | Gap | Default chosen | Where implemented |
 |---|---|---|---|
 | 1 | Whether the platform requires limits, and the policy source | Two-valued question ("Does your platform require limits? [Yes/No]") stored in its own `platformRequiresLimits` boolean field. If Yes, ask for the ratio/cap separately and store in `platformLimitPolicy`; if the user doesn't know the exact policy, fall back to a conservative ratio (2.0× CPU, 1.5× memory) and flag it under Assumptions. | §4.1, §12 |
-| 2 | "Increasing memory trend" definition | First-half-vs-second-half mean comparison, flagged at >10% rise. Chosen over a regression slope for explainability and robustness on short/sparse windows. | §9 |
+| 2 | "Increasing memory trend" definition, incl. multi-replica temporal alignment | Per-pod first-half-vs-second-half mean comparison (each pod split at its own timeline midpoint), combined by averaging the per-pod percentage changes; flagged at >10% average rise. Computed per pod first — not on the concatenated multi-replica sample set — because concatenation across replicas has no single well-defined "temporal midpoint." | §9 |
 | 3 | "Complete workload info" for HIGH confidence | Requires an explicit answer (value or confirmed-absent) for every optional field — `limits`, `hpa`, `restartHistory`, `platformLimitPolicy` — not merely "whatever was asked." Prevents reaching HIGH confidence by skipping questions. | §10 |
 | 4 | DaemonSet replica count | Ask the user directly ("how many nodes/pods is this scheduled on?"). If unavailable, leave `replicas` unset, report impact totals as "not computable," and force `LOW` confidence (missing critical info). | §4.1 |
 | 5 | Percentile interpolation method & unit convention | Linear interpolation (e.g. `numpy.percentile` default); binary (1024-based) units end-to-end. Required to reproduce the PRD's own worked examples exactly. | §6, §8 |
@@ -356,4 +379,4 @@ Items 1 and 4 introduce user-facing questions beyond what §3's state machine or
 - **Schema validation tests**: malformed/incomplete inputs from §4.3 each produce the expected rejection or warning, not a silent pass-through.
 - **Scenario tests** (via `examples/sample-input.json` → expected report sections): single-replica workload, multi-replica workload, workload with existing limits, workload with no limits (both platform-requires-limits branches), workload with OOM events, workload with insufficient observation window (<24h) to confirm it downgrades confidence rather than blocking the report.
 - **Conversation-flow review**: manually walk the state machine (§3) with partial information at each state to confirm the skill asks targeted follow-up questions rather than failing or guessing.
-- **Resolved-decision coverage (§13)**: unit tests for the first-half/second-half trend detector at and around the 10% boundary; a scenario test for a DaemonSet with no user-supplied replica count (confirms "not computable" impact + forced `LOW` confidence, not a guessed number); a scenario test for a container present in config with zero metrics samples (confirms its own report subsection, not an omission); and scenario tests for both the policy-provided and "not sure" branches of §12's limit logic (confirms the conservative-ratio fallback and its Assumptions callout).
+- **Resolved-decision coverage (§13)**: unit tests for the per-pod trend detector at and around the 10% boundary, including a multi-replica case where individual pods disagree (some rising, some falling) to confirm the average-of-per-pod-changes combination behaves as expected, and a case where some pods have too few samples to contribute (confirms they're excluded from the trend signal without crashing, and that partial coverage is noted under Assumptions); a scenario test for a DaemonSet with no user-supplied replica count (confirms "not computable" impact + forced `LOW` confidence, not a guessed number); a scenario test for a container present in config with zero metrics samples (confirms its own report subsection, not an omission); and scenario tests for both the policy-provided and "not sure" branches of §12's limit logic (confirms the conservative-ratio fallback and its Assumptions callout).
