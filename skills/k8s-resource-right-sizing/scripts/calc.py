@@ -62,3 +62,27 @@ def format_memory_bytes(b: int) -> str:
         if b % multiplier == 0:
             return f"{b // multiplier}{suffix}"
     return str(b)
+
+
+def percentile(values: list[float], p: float) -> float:
+    """Linear-interpolation percentile on a sorted copy of `values`, matching
+    numpy.percentile's default "linear" method (spec §6)."""
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    if n == 1:
+        return float(sorted_values[0])
+    rank = (p / 100) * (n - 1)
+    lower = int(rank)
+    fraction = rank - lower
+    if fraction == 0:
+        return float(sorted_values[lower])
+    return sorted_values[lower] + (sorted_values[lower + 1] - sorted_values[lower]) * fraction
+
+
+def aggregate_samples(pod_sample_lists: list[list[float]]) -> list[float]:
+    """Flatten per-pod sample lists into one combined list (spec §6). A
+    no-op for `replicas == 1`, where there is only one list to flatten."""
+    combined: list[float] = []
+    for samples in pod_sample_lists:
+        combined.extend(samples)
+    return combined
