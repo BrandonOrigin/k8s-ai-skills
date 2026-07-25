@@ -84,11 +84,14 @@ If the workload kind is unsupported (Job, CronJob, VirtualMachine, or a bare man
   ],
   "hpa": { "min": "int", "max": "int", "targetCPUUtilization": "int" } | null,
   "restartHistory": [{ "container": "string", "reason": "OOMKilled | Error | ...", "count": "int" }],
+  "platformRequiresLimits": "boolean | null",
   "platformLimitPolicy": { "type": "ratio | absolute", "cpu": "number | K8s quantity", "memory": "number | K8s quantity" } | null
 }
 ```
 
-`containers[].requests.{cpu,memory}` is **required** per container. `limits`, `hpa`, `restartHistory`, and `platformLimitPolicy` are optional (PRD §"Workload Configuration"); see §12 for how `platformLimitPolicy` is populated. Every optional field must be set to an explicit value or explicit `null`/"confirmed absent" — the model must not leave a field simply unasked, per the completeness rule in §10.
+`containers[].requests.{cpu,memory}` is **required** per container. `limits`, `hpa`, `restartHistory`, `platformRequiresLimits`, and `platformLimitPolicy` are optional (PRD §"Workload Configuration"); see §12 for how `platformRequiresLimits`/`platformLimitPolicy` are populated. Every optional field must be set to an explicit value or explicit `null`/"confirmed absent" — the model must not leave a field simply unasked, per the completeness rule in §10.
+
+**`platformRequiresLimits` (resolved):** a two-valued question, not three — the model asks "Does your Kubernetes platform require resource limits? [Yes/No]" and stores the boolean answer directly in this field. `null` means the question hasn't been asked yet (an unresolved state the completeness checklist in §10 can detect), not a third answer choice; there is no "Unknown" response the user can give. `platformLimitPolicy` (the ratio/cap itself) is a separate field, only relevant when `platformRequiresLimits == true` — see §12.
 
 **DaemonSet replicas (resolved, was open in §13):** the model asks the user directly — "How many nodes/pods is this DaemonSet currently scheduled on?" — rather than reading `.spec.replicas` (which doesn't exist) or inferring from cluster state the skill has no access to. If the user cannot provide it, `replicas` is left unset, the Replica Impact Summary (§11) reports totals as "not computable — replica count unknown" instead of guessing, and this counts as missing critical info, forcing per-container confidence to `LOW` (§10).
 
@@ -256,7 +259,7 @@ Evaluate `LOW` conditions first (highest precedence — any one trips it regardl
 - `limits` — either present, or the user has confirmed no limits are configured (not simply "not mentioned").
 - `hpa` — either present, or the user has confirmed no HPA is configured.
 - `restartHistory` — the model has explicitly asked about restarts/OOM events and recorded the answer (even if "none").
-- `platformLimitPolicy` — resolved via §12 (a definite Yes/No/Unknown on record, and a policy value if Yes).
+- `platformRequiresLimits` — a definite Yes/No on record (§4.1); and if Yes, `platformLimitPolicy` has either a policy value or an explicit "not sure" (the conservative-ratio fallback in §12) — either counts as resolved for completeness purposes, since "not sure" is a recorded answer, not a skipped question.
 
 If any of these was simply never asked, confidence caps at `MEDIUM` even if the numeric criteria (7 days, stable variability) are met. This makes HIGH confidence a function of what was verified, not what was skipped.
 
@@ -294,10 +297,11 @@ if container has existing limits:
     recommended_limit = round(recommended_request * ratio)   # §8
 
 else:
-    if platform_requires_limits is None:
-        ask_user("Does your Kubernetes platform require resource limits? [Yes/No/Unknown]")
+    if platformRequiresLimits is null:
+        ask_user("Does your Kubernetes platform require resource limits? [Yes/No]")
+        # store the boolean answer in platformRequiresLimits (§4.1) — no third option
 
-    if platform_requires_limits == True:
+    if platformRequiresLimits == true:
         if platformLimitPolicy is not provided:
             ask_user(
                 "What ratio or absolute cap does your platform require for CPU/memory limits? "
@@ -307,7 +311,7 @@ else:
         if platformLimitPolicy provided (ratio or absolute):
             recommended_limit = apply_policy(recommended_request, platformLimitPolicy)  # §8 rounding applied after
             label recommendation as "policy-derived" in the report, not usage-derived
-        else:  # user replied "not sure"
+        else:  # user replied "not sure" — platformRequiresLimits is still true, just no policy value
             recommended_limit = round(recommended_request * DEFAULT_CONSERVATIVE_RATIO)
             # DEFAULT_CONSERVATIVE_RATIO = 2.0 (CPU), 1.5 (memory) — matches the
             # PRD's own over-provisioning thresholds (§9), so a limit at this
@@ -316,17 +320,15 @@ else:
             conservative default ratio. Confirm against actual platform policy
             before applying."
 
-    else:  # False or Unknown
+    else:  # platformRequiresLimits == false
         recommended_limit = None  # requests-only recommendation
-        if platform_requires_limits == "Unknown":
-            flag in Assumptions: "Platform limit requirement unknown; treated
-            as not required for this recommendation. Confirm with platform
-            team before omitting limits."
 ```
 
 This must run per container per resource (CPU and memory can have different existing ratios), not once for the whole workload.
 
-**Platform limit policy source (resolved, was open in §13):** rather than silently deriving a limit from an undefined "platform policy," the model asks for the policy directly in-conversation (a ratio or an absolute cap) and stores it in the optional `platformLimitPolicy` field (§4.1) so it's part of the auditable input, not a hidden side channel. If the user doesn't know their platform's policy, the skill falls back to a conservative default ratio (2.0× CPU, 1.5× memory — deliberately set at the PRD's own over-provisioning threshold, so the fallback recommendation doesn't immediately flag itself as over-provisioned) and says so explicitly under Assumptions, rather than guessing silently or blocking the report. "Unknown" for whether limits are required at all is treated as "No" for this run (requests-only), with the same explicit caveat under Assumptions.
+**Platform limit policy source (resolved, was open in §13):** rather than silently deriving a limit from an undefined "platform policy," the model asks for the policy directly in-conversation (a ratio or an absolute cap) and stores it in the optional `platformLimitPolicy` field (§4.1) so it's part of the auditable input, not a hidden side channel. If the user doesn't know their platform's policy, the skill falls back to a conservative default ratio (2.0× CPU, 1.5× memory — deliberately set at the PRD's own over-provisioning threshold, so the fallback recommendation doesn't immediately flag itself as over-provisioned) and says so explicitly under Assumptions, rather than guessing silently or blocking the report.
+
+`platformRequiresLimits` itself is strictly boolean (§4.1) — the question posed to the user has exactly two answers, Yes or No. There is no "Unknown" branch: if the user genuinely doesn't know whether their platform requires limits, that's a real-world Yes/No fact they need to go find out or guess at, not a third state the skill models — the skill should encourage them to check rather than accept ambiguity here. (Contrast with `platformLimitPolicy`'s "not sure" above, which is a legitimately different question — "does my platform require limits" vs. "what exactly is the required ratio" — and only the latter has a graceful unknown-value fallback.)
 
 —
 
@@ -336,15 +338,15 @@ The PRD left the following underspecified. Each is now pinned to a concrete defa
 
 | # | Gap | Default chosen | Where implemented |
 |---|---|---|---|
-| 1 | Platform limit policy source | Ask the user in-conversation for a ratio or absolute cap; store in `platformLimitPolicy`. If unknown, fall back to a conservative ratio (2.0× CPU, 1.5× memory) and flag it under Assumptions. | §4.1, §12 |
+| 1 | Whether the platform requires limits, and the policy source | Two-valued question ("Does your platform require limits? [Yes/No]") stored in its own `platformRequiresLimits` boolean field. If Yes, ask for the ratio/cap separately and store in `platformLimitPolicy`; if the user doesn't know the exact policy, fall back to a conservative ratio (2.0× CPU, 1.5× memory) and flag it under Assumptions. | §4.1, §12 |
 | 2 | "Increasing memory trend" definition | First-half-vs-second-half mean comparison, flagged at >10% rise. Chosen over a regression slope for explainability and robustness on short/sparse windows. | §9 |
 | 3 | "Complete workload info" for HIGH confidence | Requires an explicit answer (value or confirmed-absent) for every optional field — `limits`, `hpa`, `restartHistory`, `platformLimitPolicy` — not merely "whatever was asked." Prevents reaching HIGH confidence by skipping questions. | §10 |
 | 4 | DaemonSet replica count | Ask the user directly ("how many nodes/pods is this scheduled on?"). If unavailable, leave `replicas` unset, report impact totals as "not computable," and force `LOW` confidence (missing critical info). | §4.1 |
 | 5 | Percentile interpolation method & unit convention | Linear interpolation (e.g. `numpy.percentile` default); binary (1024-based) units end-to-end. Required to reproduce the PRD's own worked examples exactly. | §6, §8 |
-| 6 | "Unknown" answer to "does your platform require limits?" | Treated as "No" (requests-only) for this run, with an explicit Assumptions caveat to confirm with the platform team. | §12 |
+| 6 | ~~"Unknown" answer to "does your platform require limits?"~~ | **Superseded** — the question is strictly Yes/No (item 1); there is no third "Unknown" answer to handle. `platformRequiresLimits: null` distinguishes "not asked yet" from either answer, so no separate Unknown-handling branch is needed. | §4.1, §12 |
 | 7 | Container with config but no metrics | Gets its own Container Analysis subsection (not omitted), with Usage Analysis/Recommendation replaced by an explicit "no metrics" note and Confidence forced to `LOW`. | §11 |
 
-Items 1, 4, and 6 introduce user-facing questions beyond what §3's state machine originally enumerated (`COLLECT_CONFIG`/`COLLECT_METRICS` should be read as including these follow-ups, not just the base fields in §4.1-4.2).
+Items 1 and 4 introduce user-facing questions beyond what §3's state machine originally enumerated (`COLLECT_CONFIG`/`COLLECT_METRICS` should be read as including these follow-ups, not just the base fields in §4.1-4.2).
 
 —
 
