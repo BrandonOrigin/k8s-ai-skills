@@ -1,6 +1,9 @@
 """Deterministic math for Kubernetes resource right-sizing: percentiles, safety
 factors, rounding, and thresholds. See docs/specs/skill1-technical-spec.md."""
 
+import math
+from typing import Callable
+
 # K8s quantity suffixes, binary (1024-based) checked before decimal (1000-based)
 # since both are valid K8s memory quantity suffixes and don't overlap textually.
 _BINARY_MEMORY_SUFFIXES = {
@@ -55,12 +58,15 @@ def format_cpu_millicores(m: int) -> str:
 
 def format_memory_bytes(b: int) -> str:
     """Format bytes as a K8s memory quantity string using binary units,
-    e.g. 134217728 -> "128Mi"."""
+    e.g. 134217728 -> "128Mi", 1342177280 -> "1.25Gi". Picks the largest
+    unit the value reaches or exceeds, then trims to a clean decimal."""
     if b == 0:
         return "0"
     for suffix, multiplier in _MEMORY_FORMAT_UNITS:
-        if b % multiplier == 0:
-            return f"{b // multiplier}{suffix}"
+        if b >= multiplier:
+            value = b / multiplier
+            text = f"{value:.4f}".rstrip("0").rstrip(".")
+            return f"{text}{suffix}"
     return str(b)
 
 
@@ -100,3 +106,27 @@ def recommended_cpu_millicores(p95_millicores: float, safety_factor: float = CPU
 def recommended_memory_bytes(p95_bytes: float, safety_factor: float = MEMORY_SAFETY_FACTOR) -> float:
     """Pre-rounding memory request recommendation (spec §7)."""
     return p95_bytes * safety_factor
+
+
+def round_cpu_millicores(m: float) -> int:
+    """Round CPU millicores up to the nearest 50m (spec §8)."""
+    return math.ceil(m / 50) * 50
+
+
+def round_memory_bytes(b: float) -> int:
+    """Round memory bytes up to the nearest 128Mi (below 1Gi) or 256Mi
+    (at or above 1Gi) (spec §8)."""
+    gib = 1024**3
+    if b < gib:
+        step = 128 * 1024**2
+    else:
+        step = 256 * 1024**2
+    return math.ceil(b / step) * step
+
+
+def round_limit_from_ratio(rounded_request: float, ratio: float, round_fn: Callable[[float], int]) -> int:
+    """Derive a rounded limit from an already-rounded request and an
+    existing limit/request ratio, rounding the result with `round_fn`
+    (spec §8's order of operations: round request, then multiply, then
+    round the limit)."""
+    return round_fn(rounded_request * ratio)
