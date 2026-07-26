@@ -1,0 +1,47 @@
+# Lightweight overrides for prometheus-community/kube-prometheus-stack.
+#
+# Disables Grafana and Alertmanager (not needed for data collection — we
+# read Prometheus directly via its HTTP API in step 6) and trims resource
+# requests/limits and retention to fit a 2 vCPU / 4GB host alongside k3s
+# and the test workload.
+#
+# Chart values occasionally change key names between releases. Before
+# installing, confirm these keys still exist for the chart version you're
+# pulling:
+#   helm show values prometheus-community/kube-prometheus-stack > /tmp/default-values.yaml
+
+grafana:
+  enabled: false
+
+alertmanager:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 10d
+    scrapeInterval: 30s
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        cpu: 500m
+        memory: 800Mi
+    # No storageSpec set -> emptyDir. Fine for a throwaway test cluster;
+    # metrics are lost if the Prometheus pod restarts. Add a storageSpec
+    # with a PVC if you need the history to survive a restart.

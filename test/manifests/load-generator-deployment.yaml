@@ -1,0 +1,38 @@
+# Kept intentionally small so its own resource footprint doesn't compete
+# with target-app for the 2 vCPU box, and so it never shows up as a
+# meaningful line in skill1's analysis (it's test infrastructure, not the
+# workload under test).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: test-workload
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+        - name: load-generator
+          image: busybox:1.36
+          command: ["sh", "/scripts/load.sh"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: load-generator-script
+            defaultMode: 0755
