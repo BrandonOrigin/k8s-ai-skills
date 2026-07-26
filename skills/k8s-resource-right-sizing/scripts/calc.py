@@ -193,3 +193,33 @@ def container_memory_trend_increasing(pod_sample_series: list[list[tuple[float, 
     if not per_pod_pct_changes:
         return False
     return mean(per_pod_pct_changes) > 0.10
+
+
+def variability_ratio(p50: float, p95: float) -> float:
+    """spec §10: P95/P50 ratio, "inf" for a zero-baseline (idle) container
+    rather than raising ZeroDivisionError."""
+    return p95 / p50 if p50 > 0 else float("inf")
+
+
+def variability_class(ratio: float) -> str:
+    """spec §10: classify a variability ratio into stable/variable/highly_variable."""
+    if ratio <= 2:
+        return "stable"
+    if ratio <= 4:
+        return "variable"
+    return "highly_variable"
+
+
+def confidence_level(
+    observation_hours: float,
+    overall_variability: str,
+    workload_info_complete: bool,
+    critical_info_missing: bool,
+) -> str:
+    """spec §10: per-container confidence tier. LOW is checked first as an
+    override, then HIGH's AND-conditions, else MEDIUM."""
+    if observation_hours < 24 or overall_variability == "highly_variable" or critical_info_missing:
+        return "LOW"
+    if observation_hours >= 168 and workload_info_complete and overall_variability == "stable":
+        return "HIGH"
+    return "MEDIUM"
