@@ -219,7 +219,10 @@ def workload_info_complete(workload_config: dict) -> bool:
 
 def critical_info_missing(workload_config: dict, metrics_list: list[dict]) -> bool:
     """spec §10's critical-info check: True if any container lacks its
-    required requests or has no matching metrics entry."""
+    required requests or has no matching metrics entry, or if `replicas`
+    is unset -- per spec §4.1/§13's DaemonSet carve-out, an unknown
+    replica count makes the Replica Impact Summary "not computable" and
+    is itself treated as missing critical info."""
     metrics_container_names = {m.get("container") for m in metrics_list}
     for container in workload_config.get("containers", []):
         requests = container.get("requests") or {}
@@ -227,4 +230,6 @@ def critical_info_missing(workload_config: dict, metrics_list: list[dict]) -> bo
             return True
         if container.get("name") not in metrics_container_names:
             return True
+    if "replicas" not in workload_config:
+        return True
     return False

@@ -66,3 +66,13 @@ def test_container_with_no_metrics_is_critical_info_missing():
 def test_container_with_metrics_and_requests_is_not_critical_info_missing():
     metrics_list = [{"container": "app", "observationWindowHours": 168}]
     assert schema.critical_info_missing(COMPLETE_CONFIG, metrics_list) is False
+
+
+def test_missing_replicas_is_critical_info_missing():
+    # spec §4.1/§13: an unset replica count (e.g. a DaemonSet the user
+    # couldn't give a node/pod count for) makes impact "not computable"
+    # and counts as missing critical info.
+    data = copy.deepcopy(COMPLETE_CONFIG)
+    del data["replicas"]
+    metrics_list = [{"container": "app", "observationWindowHours": 168}]
+    assert schema.critical_info_missing(data, metrics_list) is True
