@@ -2,6 +2,7 @@
 factors, rounding, and thresholds. See docs/specs/skill1-technical-spec.md."""
 
 import math
+from statistics import mean
 from typing import Callable
 
 # K8s quantity suffixes, binary (1024-based) checked before decimal (1000-based)
@@ -170,3 +171,25 @@ def memory_underprovisioned(
         or any_oom_events
         or increasing_trend
     )
+
+
+def container_memory_trend_increasing(pod_sample_series: list[list[tuple[float, float]]]) -> bool:
+    """Per-pod first-half-vs-second-half memory trend detection (spec §9).
+    Each pod's series is sorted by its own timestamp and split at its own
+    midpoint; per-pod percentage changes are averaged unweighted across
+    pods, flagged increasing if the average exceeds 10%."""
+    per_pod_pct_changes = []
+    for series in pod_sample_series:
+        series = sorted(series, key=lambda s: s[0])
+        if len(series) < 4:
+            continue
+        mid = len(series) // 2
+        first_half_mean = mean(v for _, v in series[:mid])
+        second_half_mean = mean(v for _, v in series[mid:])
+        if first_half_mean == 0:
+            continue
+        per_pod_pct_changes.append(second_half_mean / first_half_mean - 1)
+
+    if not per_pod_pct_changes:
+        return False
+    return mean(per_pod_pct_changes) > 0.10
