@@ -130,3 +130,43 @@ def round_limit_from_ratio(rounded_request: float, ratio: float, round_fn: Calla
     (spec §8's order of operations: round request, then multiply, then
     round the limit)."""
     return round_fn(rounded_request * ratio)
+
+
+def cpu_overprovisioned(current_cpu_request: float, recommended_cpu_request: float) -> bool:
+    """spec §9: current request more than 2x the recommendation."""
+    return current_cpu_request > recommended_cpu_request * 2
+
+
+def memory_overprovisioned(
+    current_memory_request: float,
+    recommended_memory_request: float,
+    increasing_trend: bool,
+    any_oom_events: bool,
+) -> bool:
+    """spec §9: current request more than 1.5x the recommendation, unless
+    memory usage is trending up or OOM events have occurred."""
+    return (
+        current_memory_request > recommended_memory_request * 1.5
+        and not increasing_trend
+        and not any_oom_events
+    )
+
+
+def cpu_underprovisioned(p95_cpu_usage: float, current_cpu_request: float) -> bool:
+    """spec §9: P95 usage above 80% of the current request."""
+    return p95_cpu_usage > current_cpu_request * 0.8
+
+
+def memory_underprovisioned(
+    p95_memory_usage: float,
+    current_memory_request: float,
+    increasing_trend: bool,
+    any_oom_events: bool,
+) -> bool:
+    """spec §9: P95 usage above 90% of the current request, or OOM events,
+    or an increasing usage trend."""
+    return (
+        p95_memory_usage > current_memory_request * 0.9
+        or any_oom_events
+        or increasing_trend
+    )
