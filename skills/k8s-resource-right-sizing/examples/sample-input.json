@@ -1,0 +1,368 @@
+{
+  "workloadConfig": {
+    "kind": "Deployment",
+    "name": "checkout-service",
+    "namespace": "prod",
+    "replicas": 3,
+    "containers": [
+      {
+        "name": "web",
+        "requests": {
+          "cpu": "500m",
+          "memory": "512Mi"
+        },
+        "limits": {
+          "cpu": "1",
+          "memory": "1Gi"
+        }
+      },
+      {
+        "name": "worker",
+        "requests": {
+          "cpu": "250m",
+          "memory": "256Mi"
+        },
+        "limits": null
+      },
+      {
+        "name": "log-shipper",
+        "requests": {
+          "cpu": "50m",
+          "memory": "64Mi"
+        },
+        "limits": null
+      }
+    ],
+    "hpa": {
+      "min": 2,
+      "max": 6,
+      "targetCPUUtilization": 70
+    },
+    "restartHistory": [
+      {
+        "container": "worker",
+        "reason": "OOMKilled",
+        "count": 2
+      }
+    ],
+    "platformRequiresLimits": true,
+    "platformLimitPolicy": {
+      "type": "ratio",
+      "cpu": 2.0,
+      "memory": 1.5
+    }
+  },
+  "metrics": [
+    {
+      "container": "web",
+      "observationWindowHours": 168,
+      "cpu": {
+        "samples": [
+          {
+            "podName": "checkout-service-web-0",
+            "timestampSeries": [
+              0,
+              3600,
+              7200,
+              10800,
+              14400,
+              18000,
+              21600,
+              25200
+            ],
+            "valuesMillicores": [
+              260.0,
+              290.0,
+              320.0,
+              350.0,
+              380.0,
+              260.0,
+              290.0,
+              320.0
+            ]
+          },
+          {
+            "podName": "checkout-service-web-1",
+            "timestampSeries": [
+              100,
+              3700,
+              7300,
+              10900,
+              14500,
+              18100,
+              21700,
+              25300
+            ],
+            "valuesMillicores": [
+              270.0,
+              300.0,
+              330.0,
+              360.0,
+              390.0,
+              270.0,
+              300.0,
+              330.0
+            ]
+          },
+          {
+            "podName": "checkout-service-web-2",
+            "timestampSeries": [
+              200,
+              3800,
+              7400,
+              11000,
+              14600,
+              18200,
+              21800,
+              25400
+            ],
+            "valuesMillicores": [
+              250.0,
+              280.0,
+              310.0,
+              340.0,
+              370.0,
+              250.0,
+              280.0,
+              310.0
+            ]
+          }
+        ]
+      },
+      "memory": {
+        "samples": [
+          {
+            "podName": "checkout-service-web-0",
+            "timestampSeries": [
+              0,
+              3600,
+              7200,
+              10800,
+              14400,
+              18000,
+              21600,
+              25200
+            ],
+            "valuesBytes": [
+              251658240.0,
+              272629760.0,
+              293601280.0,
+              314572800.0,
+              335544320.0,
+              251658240.0,
+              272629760.0,
+              293601280.0
+            ]
+          },
+          {
+            "podName": "checkout-service-web-1",
+            "timestampSeries": [
+              100,
+              3700,
+              7300,
+              10900,
+              14500,
+              18100,
+              21700,
+              25300
+            ],
+            "valuesBytes": [
+              262144000.0,
+              283115520.0,
+              304087040.0,
+              325058560.0,
+              346030080.0,
+              262144000.0,
+              283115520.0,
+              304087040.0
+            ]
+          },
+          {
+            "podName": "checkout-service-web-2",
+            "timestampSeries": [
+              200,
+              3800,
+              7400,
+              11000,
+              14600,
+              18200,
+              21800,
+              25400
+            ],
+            "valuesBytes": [
+              241172480.0,
+              262144000.0,
+              283115520.0,
+              304087040.0,
+              325058560.0,
+              241172480.0,
+              262144000.0,
+              283115520.0
+            ]
+          }
+        ]
+      },
+      "oomEvents": []
+    },
+    {
+      "container": "worker",
+      "observationWindowHours": 168,
+      "cpu": {
+        "samples": [
+          {
+            "podName": "checkout-service-worker-0",
+            "timestampSeries": [
+              0,
+              3600,
+              7200,
+              10800,
+              14400,
+              18000,
+              21600,
+              25200
+            ],
+            "valuesMillicores": [
+              170.0,
+              190.0,
+              210.0,
+              230.0,
+              250.0,
+              170.0,
+              190.0,
+              210.0
+            ]
+          },
+          {
+            "podName": "checkout-service-worker-1",
+            "timestampSeries": [
+              100,
+              3700,
+              7300,
+              10900,
+              14500,
+              18100,
+              21700,
+              25300
+            ],
+            "valuesMillicores": [
+              180.0,
+              200.0,
+              220.0,
+              240.0,
+              260.0,
+              180.0,
+              200.0,
+              220.0
+            ]
+          },
+          {
+            "podName": "checkout-service-worker-2",
+            "timestampSeries": [
+              200,
+              3800,
+              7400,
+              11000,
+              14600,
+              18200,
+              21800,
+              25400
+            ],
+            "valuesMillicores": [
+              175.0,
+              195.0,
+              215.0,
+              235.0,
+              255.0,
+              175.0,
+              195.0,
+              215.0
+            ]
+          }
+        ]
+      },
+      "memory": {
+        "samples": [
+          {
+            "podName": "checkout-service-worker-0",
+            "timestampSeries": [
+              0,
+              3600,
+              7200,
+              10800,
+              14400,
+              18000,
+              21600,
+              25200
+            ],
+            "valuesBytes": [
+              199229440,
+              199229440,
+              199229440,
+              199229440,
+              246415360,
+              246415360,
+              246415360,
+              246415360
+            ]
+          },
+          {
+            "podName": "checkout-service-worker-1",
+            "timestampSeries": [
+              100,
+              3700,
+              7300,
+              10900,
+              14500,
+              18100,
+              21700,
+              25300
+            ],
+            "valuesBytes": [
+              204472320,
+              204472320,
+              204472320,
+              204472320,
+              251658240,
+              251658240,
+              251658240,
+              251658240
+            ]
+          },
+          {
+            "podName": "checkout-service-worker-2",
+            "timestampSeries": [
+              200,
+              3800,
+              7400,
+              11000,
+              14600,
+              18200,
+              21800,
+              25400
+            ],
+            "valuesBytes": [
+              193986560,
+              193986560,
+              193986560,
+              193986560,
+              241172480,
+              241172480,
+              241172480,
+              241172480
+            ]
+          }
+        ]
+      },
+      "oomEvents": [
+        {
+          "podName": "checkout-service-worker-1",
+          "timestamp": "2026-07-01T03:15:00Z"
+        },
+        {
+          "podName": "checkout-service-worker-2",
+          "timestamp": "2026-07-03T09:42:00Z"
+        }
+      ]
+    }
+  ]
+}
