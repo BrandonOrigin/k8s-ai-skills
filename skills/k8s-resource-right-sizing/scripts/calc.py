@@ -86,3 +86,17 @@ def aggregate_samples(pod_sample_lists: list[list[float]]) -> list[float]:
     for samples in pod_sample_lists:
         combined.extend(samples)
     return combined
+
+
+CPU_SAFETY_FACTOR = 1.2
+MEMORY_SAFETY_FACTOR = 1.25
+
+
+def recommended_cpu_millicores(p95_millicores: float, safety_factor: float = CPU_SAFETY_FACTOR) -> float:
+    """Pre-rounding CPU request recommendation (spec §7)."""
+    return p95_millicores * safety_factor
+
+
+def recommended_memory_bytes(p95_bytes: float, safety_factor: float = MEMORY_SAFETY_FACTOR) -> float:
+    """Pre-rounding memory request recommendation (spec §7)."""
+    return p95_bytes * safety_factor
