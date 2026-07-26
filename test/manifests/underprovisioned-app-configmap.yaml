@@ -1,0 +1,46 @@
+# Scenario 2: under-provisioned memory, OOMKilled during peak usage.
+#
+# Threaded HTTP server: each request allocates a `size_kb` buffer and holds
+# it for `hold_ms` milliseconds before responding, simulating a
+# processing/report-generation endpoint. Because the server is threaded,
+# concurrent in-flight requests hold their buffers *simultaneously* — so
+# peak concurrent traffic (step 5) causes real, coincident memory pressure,
+# not just a higher average. The container's memory request/limit are sized
+# for the quiet/off-peak case, so peak traffic pushes resident memory past
+# the limit and the kernel OOM-kills the container.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: underprovisioned-app-script
+  namespace: test-workload
+data:
+  app.py: |
+    import http.server
+    import socketserver
+    import time
+    from urllib.parse import urlparse, parse_qs
+
+    PORT = 8080
+
+    class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            qs = parse_qs(urlparse(self.path).query)
+            size_kb = int(qs.get("size_kb", ["50"])[0])
+            hold_ms = int(qs.get("hold_ms", ["200"])[0])
+
+            buf = bytearray(size_kb * 1024)
+            buf[0::4096] = b"\x01" * len(buf[0::4096])  # touch pages -> force real allocation
+            time.sleep(hold_ms / 1000)
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok\n")
+
+        def log_message(self, format, *args):
+            pass  # quiet — avoid log-driven CPU/IO noise
+
+    with ThreadingHTTPServer(("", PORT), Handler) as httpd:
+        httpd.serve_forever()

@@ -1,0 +1,37 @@
+# Fires up to 20 concurrent wget children per peak-hour cycle, so this
+# needs a bit more CPU headroom than the overprovisioned scenario's
+# generator, even though each request itself is tiny.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: underprovisioned-load-generator
+  namespace: test-workload
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: underprovisioned-load-generator
+  template:
+    metadata:
+      labels:
+        app: underprovisioned-load-generator
+    spec:
+      containers:
+        - name: load-generator
+          image: busybox:1.36
+          command: ["sh", "/scripts/load.sh"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: underprovisioned-load-generator-script
+            defaultMode: 0755
