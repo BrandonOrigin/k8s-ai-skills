@@ -3,7 +3,7 @@ factors, rounding, and thresholds. See docs/specs/skill1-technical-spec.md."""
 
 import math
 from statistics import mean
-from typing import Callable
+from typing import Callable, Literal
 
 # K8s quantity suffixes, binary (1024-based) checked before decimal (1000-based)
 # since both are valid K8s memory quantity suffixes and don't overlap textually.
@@ -223,3 +223,34 @@ def confidence_level(
     if observation_hours >= 168 and workload_info_complete and overall_variability == "stable":
         return "HIGH"
     return "MEDIUM"
+
+
+DEFAULT_CONSERVATIVE_CPU_RATIO = 2.0
+DEFAULT_CONSERVATIVE_MEMORY_RATIO = 1.5
+
+
+def apply_limit_policy(
+    rounded_request: float,
+    policy: dict | None,
+    resource: Literal["cpu", "memory"],
+    round_fn: Callable[[float], int],
+) -> tuple[int, bool]:
+    """spec §12: derive a recommended limit from a platform limit policy.
+    `policy=None` (the "not sure" case) falls back to a conservative
+    default ratio (2.0x CPU, 1.5x memory) and reports that it did so via
+    the returned `used_conservative_default` flag."""
+    if policy is None:
+        default_ratio = (
+            DEFAULT_CONSERVATIVE_CPU_RATIO if resource == "cpu" else DEFAULT_CONSERVATIVE_MEMORY_RATIO
+        )
+        return round_fn(rounded_request * default_ratio), True
+
+    value = policy[resource]
+    if policy["type"] == "ratio":
+        limit = rounded_request * float(value)
+    else:  # "absolute"
+        if isinstance(value, str):
+            limit = parse_cpu_quantity(value) if resource == "cpu" else parse_memory_quantity(value)
+        else:
+            limit = value
+    return round_fn(limit), False
