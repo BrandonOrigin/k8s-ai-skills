@@ -93,4 +93,4 @@ plus the standalone `prometheus-community/kube-state-metrics` chart. The
 PromQL queries in step 6 are unaffected either way — only the install
 method changes.
 
-Next: [04-deploy-target-workload.md](04-deploy-target-workload.md)
+Next: [04-deploy-target-workloads.md](04-deploy-target-workloads.md)

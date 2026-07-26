@@ -1,0 +1,45 @@
+# Drives traffic against underprovisioned-app with a diurnal pattern, same
+# "business hours" window as the overprovisioned scenario, but shaped
+# differently on purpose:
+#   - Off-peak: a single small, short request at a time -> negligible,
+#     simultaneous memory well under the 128Mi limit.
+#   - Peak: a burst of concurrent, larger, slower requests fired in
+#     parallel (backgrounded, then `wait`) -> their buffers are held at the
+#     same time by underprovisioned-app's threaded server, and the combined
+#     total exceeds limits.memory -> OOMKilled.
+# Kubernetes' CrashLoopBackOff backoff will naturally throttle how often
+# this repeats during a peak window — that's expected, not a bug in this
+# script.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: underprovisioned-load-generator-script
+  namespace: test-workload
+data:
+  load.sh: |
+    #!/bin/sh
+    TARGET="http://underprovisioned-app.test-workload.svc.cluster.local:8080/"
+
+    while true; do
+      HOUR=$(date +%H)
+      if [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 20 ]; then
+        CONCURRENCY=20
+        SIZE_KB=8000
+        HOLD_MS=2000
+        CYCLE_SLEEP=5
+      else
+        CONCURRENCY=1
+        SIZE_KB=50
+        HOLD_MS=200
+        CYCLE_SLEEP=5
+      fi
+
+      i=0
+      while [ $i -lt "$CONCURRENCY" ]; do
+        wget -q -O /dev/null "${TARGET}?size_kb=${SIZE_KB}&hold_ms=${HOLD_MS}" &
+        i=$((i + 1))
+      done
+      wait
+
+      sleep "$CYCLE_SLEEP"
+    done

@@ -1,10 +1,12 @@
+# Scenario 1: over-provisioned CPU & memory.
+#
 # CPU-bound HTTP server: each request does a configurable amount of busy
 # work, so CPU usage scales with the request rate/size the load generator
 # (step 5) sends. Runs on stock python:3.12-alpine — no custom image build.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: target-app-script
+  name: overprovisioned-app-script
   namespace: test-workload
 data:
   app.py: |

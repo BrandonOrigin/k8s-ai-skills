@@ -1,0 +1,38 @@
+# Drives traffic against overprovisioned-app with a diurnal (day/night)
+# pattern — higher concurrency and per-request work during "business hours"
+# (08:00-20:00 in the container's clock, i.e. host/UTC time), lower
+# off-hours. Run continuously for >=24h (minimum) / 7 days (preferred) so
+# the resulting CPU/memory time series has the kind of realistic
+# variability skill1's Variability Ratio and Confidence Model are meant to
+# react to. Usage stays well under the container's requests throughout —
+# that gap is the over-provisioning signal.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: overprovisioned-load-generator-script
+  namespace: test-workload
+data:
+  load.sh: |
+    #!/bin/sh
+    TARGET="http://overprovisioned-app.test-workload.svc.cluster.local:8080/"
+
+    while true; do
+      HOUR=$(date +%H)
+      if [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 20 ]; then
+        CONCURRENCY=5
+        WORK=800000
+        SLEEP=1
+      else
+        CONCURRENCY=1
+        WORK=200000
+        SLEEP=2
+      fi
+
+      i=0
+      while [ $i -lt "$CONCURRENCY" ]; do
+        wget -q -O /dev/null "${TARGET}?work=${WORK}"
+        i=$((i + 1))
+      done
+
+      sleep "$SLEEP"
+    done

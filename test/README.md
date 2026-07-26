@@ -8,10 +8,19 @@ instead of only synthetic fixtures.
 skill1 needs a running workload plus **historical** CPU/memory metrics
 (minimum 24h, preferred 7 days). `metrics-server` (k3s's default) only
 exposes current usage, so this setup adds a lightweight Prometheus +
-kube-state-metrics stack to retain history, a target workload with
-deliberately mis-sized resources, and a synthetic load generator that drives
-a diurnal (day/night) traffic pattern so the resulting metrics have
-realistic variability.
+kube-state-metrics stack to retain history, two deliberately mis-sized
+target workloads, and synthetic load generators that drive a diurnal
+(day/night) traffic pattern so the resulting metrics have realistic
+variability.
+
+—
+
+## Scenarios
+
+| Deployment | Scenario | skill1 should flag |
+|---|---|---|
+| `overprovisioned-app` | Requests far more CPU/memory than it needs | CPU/memory over-provisioning |
+| `underprovisioned-app` | Requests too little memory; OOMKilled during peak-hour traffic | Memory under-provisioning + OOM events |
 
 —
 
@@ -19,13 +28,18 @@ realistic variability.
 
 ```mermaid
 flowchart LR
-    LG["load-generator\n(Deployment)"] -->|"HTTP requests,\ndiurnal pattern"| SVC["target-app\n(Service)"]
-    SVC --> APP["target-app\n(app + log-agent containers)"]
-    APP -->|cAdvisor / kubelet| Prom[Prometheus]
+    LG1["overprovisioned-\nload-generator"] -->|"moderate,\nsteady traffic"| SVC1["overprovisioned-app\n(Service)"]
+    SVC1 --> APP1["overprovisioned-app\n(app + log-agent)"]
+
+    LG2["underprovisioned-\nload-generator"] -->|"peak-hour\nconcurrent burst"| SVC2["underprovisioned-app\n(Service)"]
+    SVC2 --> APP2["underprovisioned-app\n(app, OOMKilled at peak)"]
+
+    APP1 -->|cAdvisor / kubelet| Prom[Prometheus]
+    APP2 -->|cAdvisor / kubelet| Prom
     KSM[kube-state-metrics] --> Prom
     NE[node-exporter] --> Prom
     Prom -->|"PromQL /\nquery_range API"| Extract["scripts/extract_metrics.py"]
-    Extract --> Out["skill1-runtime-metrics.json"]
+    Extract --> Out["*-runtime-metrics.json"]
 ```
 
 —
@@ -37,10 +51,10 @@ flowchart LR
 | 1 | [01-provision-server.md](01-provision-server.md) | Size and prep a 2 vCPU Ubuntu server | 15 min |
 | 2 | [02-install-k3s.md](02-install-k3s.md) | Install a lightweight k3s | 10 min |
 | 3 | [03-install-monitoring-stack.md](03-install-monitoring-stack.md) | Install Prometheus + kube-state-metrics (no Grafana/Alertmanager) | 15 min |
-| 4 | [04-deploy-target-workload.md](04-deploy-target-workload.md) | Deploy the workload skill1 will analyze (2 containers, mis-sized on purpose) | 10 min |
-| 5 | [05-deploy-synthetic-load-generator.md](05-deploy-synthetic-load-generator.md) | Deploy traffic that drives realistic, time-varying usage | 10 min |
+| 4 | [04-deploy-target-workloads.md](04-deploy-target-workloads.md) | Deploy both scenario workloads (mis-sized on purpose) | 10 min |
+| 5 | [05-deploy-synthetic-load-generators.md](05-deploy-synthetic-load-generators.md) | Deploy traffic that drives realistic, time-varying usage — and triggers the OOMKill scenario at peak hours | 10 min |
 | — | **Wait** | Let 5 run continuously | ≥24h, ideally 7 days |
-| 6 | [06-collect-metrics-for-skill1.md](06-collect-metrics-for-skill1.md) | Pull the accumulated history into skill1's input JSON shape | 15 min |
+| 6 | [06-collect-metrics-for-skill1.md](06-collect-metrics-for-skill1.md) | Pull the accumulated history into skill1's input JSON shape, for both workloads | 15 min |
 
 Reusable Kubernetes manifests live in `manifests/`; the metrics extractor
 lives in `scripts/extract_metrics.py` (stdlib-only, no pip installs needed).
@@ -61,15 +75,18 @@ lives in `scripts/extract_metrics.py` (stdlib-only, no pip installs needed).
 
 ## What you end up with
 
-- A `skill1-runtime-metrics.json` file (per-container CPU/memory sample
+For each of `overprovisioned-app` and `underprovisioned-app`:
+
+- A `<workload>-runtime-metrics.json` file (per-container CPU/memory sample
   series + OOM events, matching spec §4.2) covering whatever observation
   window you waited for.
-- A hand-assembled `workload-config.json` (spec §4.1 shape) built from
-  `kubectl get deployment` output — shown in step 6.
+- A hand-assembled `<workload>-workload-config.json` (spec §4.1 shape)
+  built from `kubectl get deployment` output — shown in step 6.
 
-Together these are exactly the two inputs skill1's `VALIDATE` state expects
-(spec §3), so once `skills/k8s-resource-right-sizing/` exists (per
-`docs/plan.md`) you can paste them straight into a conversation invoking it.
+Each pair is exactly the two inputs skill1's `VALIDATE` state expects (spec
+§3), so once `skills/k8s-resource-right-sizing/` exists (per
+`docs/plan.md`) you can paste them straight into a conversation invoking
+it — once per scenario.
 
 —
 

@@ -7,9 +7,9 @@ Sec 4.2). Stdlib only -- no pip install required.
 Usage:
     kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090 &
     python3 extract_metrics.py \
-        --namespace test-workload --workload target-app \
+        --namespace test-workload --workload overprovisioned-app \
         --containers app log-agent --hours 168 \
-        --out skill1-runtime-metrics.json
+        --out overprovisioned-app-runtime-metrics.json
 """
 import argparse
 import json

@@ -1,0 +1,46 @@
+# Scenario 2: under-provisioned memory, OOMKilled during peak usage.
+#
+# requests.memory/limits.memory are sized for the quiet/off-peak traffic
+# pattern only (as if someone right-sized this from a brief low-traffic
+# observation window). Under step 5's peak-hour burst, concurrently-held
+# request buffers exceed limits.memory and the container gets OOMKilled —
+# expect restarts during business hours once the load generator is running.
+# That's the scenario working as intended, not a misconfiguration to fix
+# here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: underprovisioned-app
+  namespace: test-workload
+  labels:
+    app: underprovisioned-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: underprovisioned-app
+  template:
+    metadata:
+      labels:
+        app: underprovisioned-app
+    spec:
+      containers:
+        - name: app
+          image: python:3.12-alpine
+          command: ["python3", "/scripts/app.py"]
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: underprovisioned-app-script

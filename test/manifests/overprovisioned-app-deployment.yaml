@@ -1,5 +1,7 @@
-# The workload skill1 will analyze. Two containers per pod on purpose
-# (exercises skill1's per-container, not per-pod, analysis unit):
+# Scenario 1: over-provisioned CPU & memory.
+#
+# Two containers per pod on purpose (exercises skill1's per-container, not
+# per-pod, analysis unit):
 #   - app:       CPU-bound HTTP server, requests deliberately set high
 #                relative to the load the generator (step 5) will produce,
 #                so skill1 has a real over-provisioning case to detect.
@@ -9,19 +11,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: target-app
+  name: overprovisioned-app
   namespace: test-workload
   labels:
-    app: target-app
+    app: overprovisioned-app
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: target-app
+      app: overprovisioned-app
   template:
     metadata:
       labels:
-        app: target-app
+        app: overprovisioned-app
     spec:
       containers:
         - name: app
@@ -52,4 +54,4 @@ spec:
       volumes:
         - name: script
           configMap:
-            name: target-app-script
+            name: overprovisioned-app-script
