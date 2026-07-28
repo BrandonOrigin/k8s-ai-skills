@@ -35,7 +35,9 @@ limit policy needs to be resolved conversationally (see
 - Python 3.10+
 - `kubectl`, already configured against the target cluster with read access
   to `deployments`, `statefulsets`, `daemonsets`, `horizontalpodautoscalers`,
-  and `pods` in the namespaces you scan.
+  and `pods` in the namespaces you scan. [`rbac/`](rbac/) has a ready-made
+  `ClusterRole` (plus a single-namespace `Role` alternative) covering
+  exactly this.
 - A reachable Prometheus URL exposing `container_cpu_usage_seconds_total`,
   `container_memory_working_set_bytes`, and
   `kube_pod_container_status_last_terminated_reason` (the same metrics
@@ -229,7 +231,10 @@ rightsizing-scan:
 
 For a company already running a lot on Kubernetes, running the scan as a
 `CronJob` avoids relying on an external CI runner having cluster access at
-all — it uses a `ServiceAccount` with read-only RBAC instead:
+all — it uses a `ServiceAccount` with read-only RBAC instead. Apply
+[`rbac/`](rbac/) first (`ClusterRole` + `ServiceAccount` +
+`ClusterRoleBinding`, or the single-namespace `Role` variant — see
+[`rbac/README.md`](rbac/README.md)) to create `rightsizing-scanner`:
 
 ```yaml
 apiVersion: batch/v1

@@ -1,0 +1,16 @@
+# Pairs with role-namespaced.yaml. `namespace:` here must match both the
+# Role's namespace and the ServiceAccount's namespace -- a RoleBinding
+# only grants access within the namespace it lives in.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-ai-skills-reader-binding
+  namespace: CHANGE-ME
+subjects:
+  - kind: ServiceAccount
+    name: rightsizing-scanner
+    namespace: CHANGE-ME
+roleRef:
+  kind: Role
+  name: k8s-ai-skills-reader
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,30 @@
+# Least-privilege alternative to clusterrole.yaml, for teams that only
+# ever scan one namespace and don't need node-level context. A Role is
+# namespace-scoped by definition, so cluster-scoped resources (nodes,
+# nodes.metrics.k8s.io, namespaces) can't be included here -- `kubectl
+# get nodes` / `kubectl top nodes` will not work under this role. Deploy
+# one copy per namespace you want to scan; pair with
+# rolebinding-namespaced.yaml (edit its `namespace:` to match).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-ai-skills-reader
+  namespace: CHANGE-ME
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+
+  # `kubectl top pods -n <namespace>` -- pods.metrics.k8s.io is namespaced,
+  # unlike nodes.metrics.k8s.io.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
