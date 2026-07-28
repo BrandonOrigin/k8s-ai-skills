@@ -1,0 +1,26 @@
+# Binds k8s-ai-skills-reader to the batch scanner's ServiceAccount.
+# To bind a human User instead (e.g. a platform engineer's own kubectl
+# context) for running the batch script or the manual test/*.md steps
+# by hand, replace the `subjects` block with:
+#
+#   subjects:
+#     - kind: User
+#       name: <username-from-your-auth-provider>
+#       apiGroup: rbac.authorization.k8s.io
+#
+# See ../README.md's "Known limitations" section: this grants read access
+# cluster-wide, matching the ClusterRole's scope -- use
+# role-namespaced.yaml + rolebinding-namespaced.yaml instead if you only
+# ever scan a single namespace and don't need node-level context.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-ai-skills-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: rightsizing-scanner
+    namespace: platform-tools
+roleRef:
+  kind: ClusterRole
+  name: k8s-ai-skills-reader
+  apiGroup: rbac.authorization.k8s.io

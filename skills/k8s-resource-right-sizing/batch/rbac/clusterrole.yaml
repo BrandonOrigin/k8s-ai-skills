@@ -1,0 +1,45 @@
+# Read-only ClusterRole covering every kubectl call this project makes --
+# batch/k8s_client.py (workload/HPA/pod discovery) and the manual kubectl
+# steps in test/*.md (kubectl get/top/logs used while validating the
+# right-sizing Skill against a live cluster). No write verbs, and no
+# access to Secrets, ConfigMaps, or RBAC objects: this role only needs to
+# read workload shape, scheduling/restart state, and usage metrics.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-ai-skills-reader
+rules:
+  # Workload shape: current requests/limits/replicas (spec §4.1).
+  # kubectl get deployment/statefulset/daemonset -n <ns> -o json
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+
+  # HPA config, layered onto workload config as spec §4.1's hpa field.
+  # kubectl get hpa -n <ns> -o json
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+
+  # Pod state for restart/OOM history (batch/k8s_client.py's
+  # discover_restart_history) and manual `kubectl get pods -w` / `kubectl
+  # logs` during Skill validation (test/05-deploy-synthetic-load-generators.md).
+  # No write verbs -- this can inspect pods, not evict or delete them.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+
+  # Cluster context: `kubectl get nodes`, `kubectl get pods -A` /
+  # namespace discovery for multi-namespace batch runs, and Warning/Normal
+  # events (OOMKilled, FailedScheduling, etc.) that a future
+  # CrashLoopBackOff-analysis Skill (docs/PRD/skill2.md) will read.
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "events"]
+    verbs: ["get", "list", "watch"]
+
+  # `kubectl top pods` / `kubectl top nodes` (test/02-install-k3s.md,
+  # test/05-deploy-synthetic-load-generators.md) -- requires metrics-server
+  # to be installed in the cluster; this only grants the RBAC to read it.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]

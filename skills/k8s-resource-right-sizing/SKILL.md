@@ -15,6 +15,10 @@ workflow; `references/methodology.md` explains the formulas in prose for
 citing in a report, and `references/report-template.md` is the literal
 report skeleton to fill in.
 
+For unattended, fleet-wide scans (nightly CI/CD job, Kubernetes CronJob)
+instead of an interactive conversation, see `batch/README.md` — it runs the
+same `scripts/calc.py`/`scripts/schema.py` engine with zero LLM calls.
+
 ## The one rule that matters most
 
 **Never compute percentiles, safety factors, rounding, thresholds, trend
