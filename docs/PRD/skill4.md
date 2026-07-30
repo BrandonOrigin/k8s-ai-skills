@@ -57,7 +57,7 @@ Analyze nodes with label "infra=true" for resource overcommit risk.
 ## Supported
 
 - A set of nodes selected by one or more label selectors (e.g. `infra=true`, `node-role.kubernetes.io/infra=""`).
-- Cluster-wide analysis when no selector is given (treated as a single group: "all nodes").
+- Cluster-wide analysis when no selector is given (treated as a single group: all **untainted** nodes — see Node Group Definition for why tainted nodes are excluded from this default).
 - CPU and memory as the analyzed resource dimensions.
 - Pod count / max-pods-per-node as a secondary scheduling constraint.
 
@@ -118,7 +118,7 @@ G -->|Yes| I[Calculate current overcommit ratios]
 I --> J[Calculate usage trend over lookback window]
 J --> K[Project time-to-threshold]
 K --> L[Identify per-node outliers]
-L --> M[Classify risk: OK / Watch / Overcommitted]
+L --> M[Classify risk: Current Status + Trend Status]
 M --> N[Generate report]
 ```
 
@@ -130,7 +130,8 @@ M --> N[Generate report]
 
 Required:
 
-- Label selector (e.g. `infra=true`). Defaults to all schedulable nodes if omitted.
+- Label selector (e.g. `infra=true`). If omitted, defaults to all **untainted**
+  nodes (see below) rather than every node in the cluster.
 
 Collected per matching node:
 
@@ -139,7 +140,57 @@ Collected per matching node:
 - Allocatable memory
 - Max Pods
 - Ready / schedulable status
-- Taints (informational — explains why only some workloads land here)
+- Taints (used to build the default group when no selector is given — see
+  below — and also kept informational for labeled-selector runs, explaining
+  why only some workloads land on a given node)
+- Sum of container CPU/memory requests and limits scheduled onto this node
+  (per-node breakdown of the same data collected at group level below —
+  required so request/limit outliers can be detected per node, not just
+  per-node usage)
+
+### Default Group When No Selector Is Given
+
+Tainted nodes are almost always a deliberately isolated, purpose-specific
+pool (dedicated/GPU nodes, spot/preemptible pools, nodes reserved for a
+specific team) that only tolerating workloads land on. Lumping them into a
+single "all nodes" capacity pool by default would mix unrelated pools
+together and produce a meaningless blended ratio — the exact problem this
+Skill exists to avoid for purpose-labeled groups.
+
+So when the user does not supply a label selector, the Skill must:
+
+- Resolve the default group as **every node with an empty taint list**
+  (`node.spec.taints` is empty), not every schedulable node.
+- Exclude any node carrying one or more taints from this default group,
+  regardless of effect (`NoSchedule`, `PreferNoSchedule`, `NoExecute`) —
+  tainted nodes are only ever included when the user explicitly selects
+  them (e.g. a selector or future toleration-aware option targets them).
+- State this default explicitly in the report's Assumptions section (which
+  nodes were included/excluded and why), the same way an explicit label
+  selector is echoed back.
+- Still apply the NotReady/Cordoned Nodes handling below on top of this
+  default group — the two exclusion rules are independent and both apply.
+
+This default-group rule only applies when no selector is given. An explicit
+label selector (e.g. `infra=true`) is honored as-is, including matching
+tainted nodes if the selector happens to match them.
+
+### NotReady / Cordoned Nodes
+
+A node matching the label selector but not `Ready`, or marked unschedulable
+(cordoned), is not real spare capacity — it cannot absorb new Pods. Counting
+its allocatable capacity in the pool would understate overcommit risk.
+
+The Skill must:
+
+- Exclude the allocatable capacity of NotReady/cordoned nodes from the
+  capacity pool denominator used in every ratio (request, limit, usage, pod
+  count).
+- Still include any Pods still scheduled/running on that node in the
+  request/limit/usage numerators — the workload hasn't gone away just
+  because the node stopped being Ready.
+- List excluded nodes by name and reason in the report (Assumptions or
+  Missing Information), so the smaller effective pool size is never silent.
 
 —
 
@@ -154,6 +205,22 @@ Required, aggregated across all Pods scheduled onto the group:
 - Pod count
 
 DaemonSet Pods must be included — they are often the biggest hidden contributor to overcommit on infra-labeled node groups (logging agents, CNI, storage agents, monitoring).
+
+## DaemonSet Contribution
+
+```
+DaemonSet Request Share (CPU / Memory) =
+Sum(DaemonSet Container Requests) / Sum(All Container Requests)
+```
+
+This is reported because DaemonSet overhead does not dilute the way regular
+workload requests do: adding a node to the group adds allocatable capacity
+*and* a proportional share of DaemonSet requests at the same time (one more
+copy of every DaemonSet Pod). A group with a high DaemonSet Request Share is
+overcommitted mostly by fixed per-node overhead, and "add more nodes" will
+not improve its ratio the way it would for a group overcommitted by regular
+workloads — this distinction should be called out explicitly in
+Recommendations.
 
 —
 
@@ -182,12 +249,13 @@ The Skill should reduce confidence if the observation period is insufficient, sa
 
 # Overcommit Calculation
 
-The Skill evaluates overcommit across three layers, computed independently for CPU and memory:
+The Skill evaluates overcommit across three layers, computed independently for CPU and memory, plus one Pod-count dimension that has no CPU/memory split:
 
 ```
 Layer 1 — Request Overcommit (scheduling risk)
 Layer 2 — Limit Overcommit  (burst/OOM risk)
 Layer 3 — Usage Overcommit  (real-time pressure)
+Pod Count — Scheduling ceiling, independent of CPU/memory
 ```
 
 ## Request Overcommit Ratio
@@ -231,6 +299,20 @@ P95(Node Group Usage) / Sum(Node Allocatable)
 
 This reflects real pressure regardless of what was requested, and is the primary signal for "is this group actually running hot."
 
+## Pod Count Overcommit Ratio
+
+```
+Pod Count Overcommit Ratio =
+Sum(Pod Count) / Sum(Max Pods)
+```
+
+Max-pods-per-node is a scheduling ceiling independent of CPU/memory: a group
+can have abundant allocatable CPU/memory left while still being unable to
+schedule new Pods because it has hit its Pod count limit. This ratio is
+classified using the same OK/Watch/Warning/Overcommitted bands as the
+resource ratios (see Risk Classification) and is reported alongside them,
+not folded into CPU or memory.
+
 —
 
 # Trend Projection — "Going to Be Overcommitted Soon"
@@ -250,34 +332,82 @@ Projected Days To Threshold =
 
 ## Warning Conditions
 
+Each label is tied to its own threshold — they are two independent checks,
+not two severity bands on a single projection:
+
 ```
 Trending — Watch:
-   Projected Days To Threshold <= 14
+   Projected Days To (Warning threshold, default 0.85) <= 14
    AND Daily Growth Rate > 0
 
 Trending — Urgent:
-   Projected Days To Threshold <= 7
+   Projected Days To (Critical threshold, default 1.0) <= 7
    AND Daily Growth Rate > 0
 ```
 
+A ratio can be Trending — Watch on the 0.85 threshold and simultaneously
+still be more than 7 days from 1.0 (not yet Urgent), or it can already be
+past both checks — report the more severe of the two labels that applies.
+
 If the growth rate is flat or negative, the group is reported as stable regardless of current ratio proximity to threshold.
 
-The Skill must clearly label trend-based warnings as **projections**, distinct from current-state findings, and must state the lookback window and assumptions used (linear growth).
+The Skill must clearly label trend-based warnings as **projections**, distinct from current-state findings (see Risk Classification), and must state the lookback window and assumptions used (linear growth).
+
+## Data Dependency
+
+The usage-overcommit ratio has a natural historical series (node usage
+metrics sampled over time). The request-overcommit ratio does not: "Required
+Information" only specifies a *current* snapshot of scheduled requests.
+Projecting a request-overcommit trend requires historical snapshots of
+scheduled requests (e.g. `kube_pod_container_resource_requests` recorded
+over time in Prometheus/kube-state-metrics), which is a stronger data
+requirement than the current-state calculation.
+
+If historical request/limit snapshots are not available, the Skill must not
+fabricate a trend. It should:
+
+- Still project the usage-overcommit ratio (which only needs usage history).
+- Report the request/limit trend as "not available" rather than omitting it
+  silently, and note it under Missing Information.
+- Reduce overall confidence accordingly (see Confidence Model).
 
 —
 
 # Risk Classification
 
-Each resource dimension (CPU, memory) and each layer (request, limit, usage) is classified:
+Current-state and trend-based findings are reported as two separate fields
+per resource dimension (CPU, memory, Pod count) and layer (request, limit,
+usage) — never merged into one classification. A ratio can be `OK` on
+Current Status while `Watch`/`Urgent` on Trend Status, and the report must
+be able to show that combination.
+
+## Current Status
+
+Based purely on the ratio computed from present-day data:
 
 ```
-OK             Ratio <  0.70,  no urgent trend
-Watch          0.70 <= Ratio < 0.85,  or trending — watch
-Warning        0.85 <= Ratio < 1.00,  or trending — urgent
+OK             Ratio <  0.70
+Watch          0.70 <= Ratio < 0.85
+Warning        0.85 <= Ratio < 1.00
 Overcommitted  Ratio >= 1.00
 ```
 
-Memory findings at `Warning` or `Overcommitted` should always be surfaced above CPU findings of the same class — memory pressure has more severe failure modes (evictions/OOM) than CPU pressure (throttling).
+## Trend Status
+
+Based purely on the trend projection (see Trend Projection), independent of
+where the current ratio sits:
+
+```
+Stable   No urgent trend (flat/negative growth, or projected days to both
+         thresholds exceed the Watch window)
+Watch    Trending — Watch (see Warning Conditions)
+Urgent   Trending — Urgent (see Warning Conditions)
+```
+
+Memory findings at `Warning`/`Overcommitted` (Current Status) or
+`Urgent`/`Watch` (Trend Status) should always be surfaced above CPU findings
+of the same class — memory pressure has more severe failure modes
+(evictions/OOM) than CPU pressure (throttling).
 
 —
 
@@ -323,21 +453,29 @@ Structure:
 
 ```
 # Executive Summary
+  - Headline status: the single most severe Current Status or Trend Status
+    found across every resource/layer/Pod-count classification (worst-case
+    rollup — e.g. one Overcommitted memory-usage finding makes the headline
+    Overcommitted even if every other layer is OK)
+  - One-line reason pointing at which resource/layer drove the headline
 
 # Node Group
   - Label selector
-  - Node count
+  - Node count (and any nodes excluded as NotReady/cordoned)
   - Total allocatable CPU / Memory
 
 # Current Overcommit Status
   - Request Overcommit Ratio (CPU / Memory)
   - Limit Overcommit Ratio (CPU / Memory)
   - Usage Overcommit Ratio (CPU / Memory)
-  - Risk Classification
+  - Pod Count Overcommit Ratio
+  - Current Status per resource/layer (see Risk Classification)
 
 # Trend Projection
-  - Growth rate
-  - Projected days to Warning / Critical threshold
+  - Growth rate per resource/layer
+  - Projected days to Warning threshold (0.85) / Critical threshold (1.0)
+  - Trend Status per resource/layer (see Risk Classification) — always
+    labeled as a projection, never merged with Current Status
 
 # Per-Node Outliers
 
@@ -357,11 +495,13 @@ Structure:
 
 A successful analysis should:
 
-- Correctly resolve the label selector to the intended node group.
+- Correctly resolve the label selector to the intended node group, or default to all untainted nodes when no selector is given.
+- Exclude NotReady/cordoned nodes' capacity from the pool while still counting any Pods still running there.
 - Include DaemonSet Pods in aggregation.
 - Report request, limit, and usage overcommit separately.
 - Distinguish CPU risk from memory risk in both language and ranking.
-- Clearly separate "overcommitted now" from "trending toward overcommitted" findings.
+- Clearly separate "overcommitted now" (Current Status) from "trending toward overcommitted" (Trend Status) as two distinct fields, never merged.
+- Roll up to a single worst-case headline status in the Executive Summary without hiding the per-layer detail.
 - Identify per-node outliers, not just the group average.
 - State confidence and data limitations explicitly.
 
