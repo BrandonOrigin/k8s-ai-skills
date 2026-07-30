@@ -57,7 +57,7 @@ Analyze nodes with label "infra=true" for resource overcommit risk.
 ## Supported
 
 - A set of nodes selected by one or more label selectors (e.g. `infra=true`, `node-role.kubernetes.io/infra=""`).
-- Cluster-wide analysis when no selector is given (treated as a single group: "all nodes").
+- Cluster-wide analysis when no selector is given (treated as a single group: all **untainted** nodes — see Node Group Definition for why tainted nodes are excluded from this default).
 - CPU and memory as the analyzed resource dimensions.
 - Pod count / max-pods-per-node as a secondary scheduling constraint.
 
@@ -130,7 +130,8 @@ M --> N[Generate report]
 
 Required:
 
-- Label selector (e.g. `infra=true`). Defaults to all schedulable nodes if omitted.
+- Label selector (e.g. `infra=true`). If omitted, defaults to all **untainted**
+  nodes (see below) rather than every node in the cluster.
 
 Collected per matching node:
 
@@ -139,11 +140,40 @@ Collected per matching node:
 - Allocatable memory
 - Max Pods
 - Ready / schedulable status
-- Taints (informational — explains why only some workloads land here)
+- Taints (used to build the default group when no selector is given — see
+  below — and also kept informational for labeled-selector runs, explaining
+  why only some workloads land on a given node)
 - Sum of container CPU/memory requests and limits scheduled onto this node
   (per-node breakdown of the same data collected at group level below —
   required so request/limit outliers can be detected per node, not just
   per-node usage)
+
+### Default Group When No Selector Is Given
+
+Tainted nodes are almost always a deliberately isolated, purpose-specific
+pool (dedicated/GPU nodes, spot/preemptible pools, nodes reserved for a
+specific team) that only tolerating workloads land on. Lumping them into a
+single "all nodes" capacity pool by default would mix unrelated pools
+together and produce a meaningless blended ratio — the exact problem this
+Skill exists to avoid for purpose-labeled groups.
+
+So when the user does not supply a label selector, the Skill must:
+
+- Resolve the default group as **every node with an empty taint list**
+  (`node.spec.taints` is empty), not every schedulable node.
+- Exclude any node carrying one or more taints from this default group,
+  regardless of effect (`NoSchedule`, `PreferNoSchedule`, `NoExecute`) —
+  tainted nodes are only ever included when the user explicitly selects
+  them (e.g. a selector or future toleration-aware option targets them).
+- State this default explicitly in the report's Assumptions section (which
+  nodes were included/excluded and why), the same way an explicit label
+  selector is echoed back.
+- Still apply the NotReady/Cordoned Nodes handling below on top of this
+  default group — the two exclusion rules are independent and both apply.
+
+This default-group rule only applies when no selector is given. An explicit
+label selector (e.g. `infra=true`) is honored as-is, including matching
+tainted nodes if the selector happens to match them.
 
 ### NotReady / Cordoned Nodes
 
@@ -465,7 +495,7 @@ Structure:
 
 A successful analysis should:
 
-- Correctly resolve the label selector to the intended node group.
+- Correctly resolve the label selector to the intended node group, or default to all untainted nodes when no selector is given.
 - Exclude NotReady/cordoned nodes' capacity from the pool while still counting any Pods still running there.
 - Include DaemonSet Pods in aggregation.
 - Report request, limit, and usage overcommit separately.
